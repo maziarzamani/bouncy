@@ -1,9 +1,9 @@
 {
-  "crates/bouncy-cli": "0.1.0",
-  "crates/bouncy-mcp": "0.1.0",
-  "crates/bouncy-fetch": "0.1.0",
+  "crates/bouncy-cli": "0.1.1",
+  "crates/bouncy-mcp": "0.1.1",
+  "crates/bouncy-fetch": "0.1.1",
   "crates/bouncy-extract": "0.1.0",
   "crates/bouncy-js": "0.1.0",
   "crates/bouncy-dom": "0.1.0",
-  "crates/bouncy-cdp": "0.1.0"
+  "crates/bouncy-cdp": "0.1.1"
 }
