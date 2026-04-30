@@ -1,0 +1,8 @@
+/target
+**/target/
+**/*.rs.bk
+.DS_Store
+.idea/
+.vscode/
+.claude/
+*.swp

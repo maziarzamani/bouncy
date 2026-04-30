@@ -1,0 +1,25 @@
+[package]
+name = "bouncy-cdp"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bouncy-js = { path = "../bouncy-js" }
+bouncy-fetch = { path = "../bouncy-fetch" }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros", "time", "sync"] }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util", "time", "process"] }
+hyper = { workspace = true, features = ["server"] }
+hyper-util = { workspace = true }
+http-body-util = { workspace = true }
+bytes = { workspace = true }

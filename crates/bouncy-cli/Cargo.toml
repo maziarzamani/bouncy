@@ -1,0 +1,32 @@
+[package]
+name = "bouncy-cli"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "bouncy"
+path = "src/main.rs"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+hyper = { workspace = true, features = ["server"] }
+hyper-util = { workspace = true }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
+
+[dependencies]
+bouncy-fetch = { path = "../bouncy-fetch" }
+bouncy-extract = { path = "../bouncy-extract" }
+bouncy-js = { path = "../bouncy-js" }
+bouncy-cdp = { path = "../bouncy-cdp" }
+clap = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+url = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+futures-util = { workspace = true }
+bytes = { workspace = true }

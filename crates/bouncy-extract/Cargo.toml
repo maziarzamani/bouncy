@@ -1,0 +1,20 @@
+[package]
+name = "bouncy-extract"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+lol_html = { workspace = true }
+html-escape = { workspace = true }
+url = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "extract"
+harness = false

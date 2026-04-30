@@ -1,0 +1,89 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/bouncy-fetch",
+    "crates/bouncy-extract",
+    "crates/bouncy-cli",
+    "crates/bouncy-js",
+    "crates/bouncy-dom",
+    "crates/bouncy-cdp",
+    "crates/bouncy-mcp",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+repository = "https://github.com/maziarzamani/bouncy"
+homepage = "https://github.com/maziarzamani/bouncy"
+
+[workspace.dependencies]
+# Core async stack.
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "macros"] }
+bytes = "1"
+url = "2"
+thiserror = "2"
+
+# HTML extraction — streaming, SIMD tag scanner, no DOM tree.
+lol_html = "2"
+# Decoder for HTML named/numeric entities — lol_html does not decode in
+# text!()/doc_text!() handlers, that's our job.
+html-escape = "0.2"
+
+# V8 directly. We build a custom snapshot for our DOM polyfills only —
+# no Deno runtime, no ops layer to the OS. Just the engine.
+v8 = "147"
+
+# DOM tree for the JS path. html5ever for spec-compliant parsing,
+# its companion markup5ever for serialization. Static path uses
+# bouncy-extract / lol-html instead — no DOM tree needed there.
+html5ever = "0.38"
+markup5ever_rcdom = "0.38"
+
+# CLI plumbing.
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures-util = "0.3"
+
+# CDP shim — WebSocket server speaking Chrome DevTools Protocol.
+tokio-tungstenite = "0.27"
+
+# HTTP / hyper stack — chosen to skip reqwest's overhead on the hot path.
+hyper = { version = "1", default-features = false, features = ["client", "http1", "http2"] }
+hyper-util = { version = "0.1", default-features = false, features = ["client", "client-legacy", "http1", "http2", "tokio"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "tls12", "logging", "rustls-native-certs", "ring"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
+http = "1"
+http-body-util = "0.1"
+
+# Comparison target for the phase 1 microbench.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
+# Benchmarking.
+criterion = { version = "0.5", default-features = false, features = ["html_reports", "async_tokio"] }
+
+# Tracing → stderr only (RECIPE.md MCP hygiene rule when applicable).
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# MCP server SDK + JSON Schema derive (used by bouncy-mcp).
+# schemars 1.x is required — that's the version rmcp 1.5 re-exports.
+rmcp = { version = "1.5", default-features = false }
+schemars = "1"
+
+# ---------------------------------------------------------------------------
+# Release profile — tuned for binary size + steady-state perf.
+#   lto = "fat"             cross-crate inlining; helps perf AND size
+#   codegen-units = 1       lets LTO see the whole program
+#   strip = "symbols"       drops the debug names; no perf impact
+#   panic = "abort"         no unwinding tables — saves ~1 MB on bouncy-full
+#   opt-level = 3           keep speed; size-z would slow the hot path
+# ---------------------------------------------------------------------------
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+opt-level = 3

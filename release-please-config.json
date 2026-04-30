@@ -1,0 +1,62 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "rust",
+  "include-component-in-tag": false,
+  "include-v-in-tag": true,
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": true,
+  "draft": false,
+  "prerelease": false,
+  "changelog-sections": [
+    { "type": "feat",    "section": "Features"          },
+    { "type": "fix",     "section": "Bug Fixes"         },
+    { "type": "perf",    "section": "Performance"       },
+    { "type": "refactor","section": "Refactoring"       },
+    { "type": "docs",    "section": "Documentation"     },
+    { "type": "ci",      "section": "CI / Build"        },
+    { "type": "chore",   "section": "Misc",  "hidden": false },
+    { "type": "test",    "section": "Tests", "hidden": true  }
+  ],
+  "packages": {
+    "crates/bouncy-cli": {
+      "package-name": "bouncy"
+    },
+    "crates/bouncy-mcp": {
+      "package-name": "bouncy-mcp",
+      "skip-github-release": true,
+      "skip-github-pull-request": true
+    },
+    "crates/bouncy-fetch": {
+      "package-name": "bouncy-fetch",
+      "skip-github-release": true,
+      "skip-github-pull-request": true
+    },
+    "crates/bouncy-extract": {
+      "package-name": "bouncy-extract",
+      "skip-github-release": true,
+      "skip-github-pull-request": true
+    },
+    "crates/bouncy-js": {
+      "package-name": "bouncy-js",
+      "skip-github-release": true,
+      "skip-github-pull-request": true
+    },
+    "crates/bouncy-dom": {
+      "package-name": "bouncy-dom",
+      "skip-github-release": true,
+      "skip-github-pull-request": true
+    },
+    "crates/bouncy-cdp": {
+      "package-name": "bouncy-cdp",
+      "skip-github-release": true,
+      "skip-github-pull-request": true
+    }
+  },
+  "plugins": [
+    {
+      "type": "linked-versions",
+      "groupName": "bouncy",
+      "components": ["bouncy", "bouncy-mcp", "bouncy-fetch", "bouncy-extract", "bouncy-js", "bouncy-dom", "bouncy-cdp"]
+    }
+  ]
+}

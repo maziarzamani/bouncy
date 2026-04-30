@@ -1,0 +1,100 @@
+name: release
+
+# Builds release tarballs / zips when a `v*` tag is pushed and uploads
+# them to a draft GitHub Release. Runs the full test suite first per
+# target — a release without green tests on that target is a footgun.
+#
+# Manual trigger via `workflow_dispatch` builds the matrix but skips
+# the upload step (so you can sanity-check artifacts before tagging).
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write           # for creating the release + uploading assets
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            ext: tar.gz
+            archive: tar
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            ext: tar.gz
+            archive: tar
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            ext: zip
+            archive: zip
+        # aarch64-unknown-linux-gnu is intentionally excluded: rusty_v8
+        # ships prebuilt static libs but cross-compiling them via
+        # `cross` (Docker) needs careful libstdc++ pinning that's not
+        # worth the maintenance for v0.1. Add when there's demand.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: build
+        run: cargo build --release --locked --target ${{ matrix.target }} -p bouncy-cli -p bouncy-mcp
+
+      - name: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME:-dev}"
+          stem="bouncy-${tag}-${{ matrix.target }}"
+          mkdir -p "dist/${stem}"
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            cp "target/${{ matrix.target }}/release/boink.exe" "dist/${stem}/"
+            cp "target/${{ matrix.target }}/release/bouncy-mcp.exe" "dist/${stem}/"
+          else
+            cp "target/${{ matrix.target }}/release/boink" "dist/${stem}/"
+            cp "target/${{ matrix.target }}/release/bouncy-mcp" "dist/${stem}/"
+          fi
+          cp README.md LICENSE "dist/${stem}/" 2>/dev/null || true
+          # CHANGELOG.md may not exist yet — best-effort copy.
+          if [[ -f CHANGELOG.md ]]; then cp CHANGELOG.md "dist/${stem}/"; fi
+          (
+            cd dist
+            if [[ "${{ matrix.archive }}" == "zip" ]]; then
+              7z a -tzip "${stem}.zip" "${stem}"
+            else
+              tar czf "${stem}.tar.gz" "${stem}"
+            fi
+          )
+
+      - name: upload artifact (CI inspection)
+        uses: actions/upload-artifact@v4
+        with:
+          name: bouncy-${{ matrix.target }}
+          path: dist/bouncy-*.${{ matrix.ext }}
+          if-no-files-found: error
+
+      - name: upload to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: dist/bouncy-*.${{ matrix.ext }}

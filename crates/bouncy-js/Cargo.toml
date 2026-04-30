@@ -1,0 +1,25 @@
+[package]
+name = "bouncy-js"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+v8 = { workspace = true }
+thiserror = { workspace = true }
+bouncy-dom = { path = "../bouncy-dom" }
+bouncy-fetch = { path = "../bouncy-fetch" }
+tokio = { workspace = true }
+url = { workspace = true }
+
+[build-dependencies]
+v8 = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+hyper = { workspace = true, features = ["server"] }
+hyper-util = { workspace = true }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
