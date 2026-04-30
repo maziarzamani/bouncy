@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bouncy_mcp::BoinkServer;
+use bouncy_mcp::BouncyServer;
 use rmcp::{transport::stdio, ServiceExt};
 use tracing_subscriber::EnvFilter;
 
@@ -16,7 +16,7 @@ async fn main() -> Result<()> {
 
     tracing::info!("bouncy-mcp starting (stdio transport)");
 
-    let server = BoinkServer::new()?;
+    let server = BouncyServer::new()?;
     let service = server.serve(stdio()).await.inspect_err(|e| {
         tracing::error!("serve error: {e}");
     })?;

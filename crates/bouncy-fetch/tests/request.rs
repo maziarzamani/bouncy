@@ -101,7 +101,7 @@ async fn custom_headers_are_forwarded() {
     let f = Fetcher::new().expect("build fetcher");
     let url = format!("http://{}/h", addr);
     let req = FetchRequest::new(&url)
-        .header("X-Boink-Test", "1")
+        .header("X-Bouncy-Test", "1")
         .header("Authorization", "Bearer abc");
     let resp = f.request(req).await.unwrap();
     let v: serde_json::Value = serde_json::from_slice(&resp.body).unwrap();

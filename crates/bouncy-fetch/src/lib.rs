@@ -310,7 +310,7 @@ impl TrackerBlocklist {
         Self::default()
     }
 
-    /// Boink's small built-in list of common ad / analytics hosts.
+    /// bouncy's small built-in list of common ad / analytics hosts.
     pub fn default_set() -> Self {
         Self::from_hosts(DEFAULT_TRACKERS.iter().copied())
     }
