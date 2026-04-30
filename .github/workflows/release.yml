@@ -66,10 +66,10 @@ jobs:
           stem="bouncy-${tag}-${{ matrix.target }}"
           mkdir -p "dist/${stem}"
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            cp "target/${{ matrix.target }}/release/boink.exe" "dist/${stem}/"
+            cp "target/${{ matrix.target }}/release/bouncy.exe" "dist/${stem}/"
             cp "target/${{ matrix.target }}/release/bouncy-mcp.exe" "dist/${stem}/"
           else
-            cp "target/${{ matrix.target }}/release/boink" "dist/${stem}/"
+            cp "target/${{ matrix.target }}/release/bouncy" "dist/${stem}/"
             cp "target/${{ matrix.target }}/release/bouncy-mcp" "dist/${stem}/"
           fi
           cp README.md LICENSE "dist/${stem}/" 2>/dev/null || true
