@@ -249,7 +249,7 @@ async fn network_set_extra_http_headers_is_applied_on_navigate() {
         &mut ws,
         40,
         "Network.setExtraHTTPHeaders",
-        json!({"headers": {"X-Boink-Extra": "yes"}}),
+        json!({"headers": {"X-Bouncy-Extra": "yes"}}),
     )
     .await;
 

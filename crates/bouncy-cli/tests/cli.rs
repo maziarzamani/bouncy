@@ -296,7 +296,7 @@ async fn fetch_post_with_body_and_headers() {
         "--body",
         r#"{"k":"v"}"#,
         "--header",
-        "X-Boink-Test: 1",
+        "X-Bouncy-Test: 1",
         "--header",
         "Authorization: Bearer abc",
         "--dump",

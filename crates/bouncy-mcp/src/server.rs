@@ -18,16 +18,16 @@ const DEFAULT_MAX_BODY_BYTES: u64 = 1_048_576; // 1 MB
 const DEFAULT_RETRY_INITIAL_MS: u64 = 250;
 
 #[derive(Clone)]
-pub struct BoinkServer {
+pub struct BouncyServer {
     fetcher: Arc<Fetcher>,
     // The `#[tool_handler]` macro on `impl ServerHandler` reads this
     // through generated code that escapes dead-code analysis.
     #[allow(dead_code)]
-    tool_router: ToolRouter<BoinkServer>,
+    tool_router: ToolRouter<BouncyServer>,
 }
 
 #[tool_router]
-impl BoinkServer {
+impl BouncyServer {
     pub fn new() -> anyhow::Result<Self> {
         let fetcher = Arc::new(Fetcher::new()?);
         Ok(Self {
@@ -294,7 +294,7 @@ impl BoinkServer {
 }
 
 #[tool_handler]
-impl ServerHandler for BoinkServer {
+impl ServerHandler for BouncyServer {
     fn get_info(&self) -> ServerInfo {
         // ServerInfo is #[non_exhaustive] so we mutate Default rather than
         // use a struct literal.
