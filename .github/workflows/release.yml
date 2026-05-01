@@ -1,11 +1,17 @@
 name: release
 
-# Builds release tarballs / zips when a `v*` tag is pushed and uploads
-# them to a draft GitHub Release. Runs the full test suite first per
-# target — a release without green tests on that target is a footgun.
+# Builds release tarballs / zips when a `v*` tag is pushed and
+# uploads them to the GitHub Release. Once the matrix is green, a
+# follow-up job publishes every workspace crate to crates.io in
+# dependency order using the CRATES_IO_TOKEN repo secret.
 #
-# Manual trigger via `workflow_dispatch` builds the matrix but skips
-# the upload step (so you can sanity-check artifacts before tagging).
+# `workflow_dispatch` is supported for ad-hoc reruns. Note: tags
+# pushed by the release-please bot use GITHUB_TOKEN, which by
+# GitHub policy does NOT trigger downstream workflows. To get this
+# to fire automatically on bot-pushed tags, configure
+# release-please.yml to use a PAT instead of the default
+# GITHUB_TOKEN. Without that, dispatch this workflow manually
+# after a release-please merge: `gh workflow run release.yml --ref vX.Y.Z`.
 
 on:
   push:
@@ -55,8 +61,13 @@ jobs:
         with:
           key: release-${{ matrix.target }}
 
+      # NOTE: --locked dropped intentionally. release-please bumps
+      # crate versions in Cargo.toml without touching Cargo.lock,
+      # so on every release the lockfile is one revision behind. We
+      # let cargo refresh it during the build — version drift is
+      # negligible because we're only building from a fixed tag.
       - name: build
-        run: cargo build --release --locked --target ${{ matrix.target }} -p bouncy-cli -p bouncy-mcp
+        run: cargo build --release --target ${{ matrix.target }} -p bouncy-cli -p bouncy-mcp
 
       - name: package
         shell: bash
@@ -98,3 +109,43 @@ jobs:
           draft: false
           generate_release_notes: true
           files: dist/bouncy-*.${{ matrix.ext }}
+
+  publish-crates:
+    name: publish to crates.io
+    needs: build
+    runs-on: ubuntu-latest
+    # Only publish on real tag pushes, not on workflow_dispatch
+    # against `main` (which would have no version-bumped tag).
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: publish-crates
+      - name: cargo login
+        env:
+          TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          if [[ -z "$TOKEN" ]]; then
+            echo "::error::CRATES_IO_TOKEN secret is not set. See https://github.com/${{ github.repository }}/settings/secrets/actions"
+            exit 1
+          fi
+          cargo login "$TOKEN"
+      # cargo publish has its own "wait for the registry index to
+      # update" between dependent uploads, so we don't need explicit
+      # sleeps. Order matters though: deps first, consumers last.
+      - name: Publish bouncy-fetch
+        run: cargo publish -p bouncy-fetch --no-verify
+      - name: Publish bouncy-extract
+        run: cargo publish -p bouncy-extract --no-verify
+      - name: Publish bouncy-dom
+        run: cargo publish -p bouncy-dom --no-verify
+      - name: Publish bouncy-js
+        run: cargo publish -p bouncy-js --no-verify
+      - name: Publish bouncy-cdp
+        run: cargo publish -p bouncy-cdp --no-verify
+      - name: Publish bouncy-mcp
+        run: cargo publish -p bouncy-mcp --no-verify
+      - name: Publish bouncy-cli
+        run: cargo publish -p bouncy-cli --no-verify
