@@ -1,10 +1,11 @@
 [package]
 name = "bouncy-dom"
-version = "0.1.0"
+version = "0.1.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Spec-compliant HTML5 DOM tree used by bouncy-js."
 
 [dependencies]
 html5ever = { workspace = true }

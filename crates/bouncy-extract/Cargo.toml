@@ -1,10 +1,11 @@
 [package]
 name = "bouncy-extract"
-version = "0.1.0"
+version = "0.1.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Streaming HTML extractor used by bouncy: titles, text, and links via lol_html."
 
 [dependencies]
 lol_html = { workspace = true }

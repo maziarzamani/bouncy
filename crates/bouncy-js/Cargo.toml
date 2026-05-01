@@ -1,16 +1,17 @@
 [package]
 name = "bouncy-js"
-version = "0.1.0"
+version = "0.1.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Embedded V8 runtime + DOM bridge used by bouncy."
 
 [dependencies]
 v8 = { workspace = true }
 thiserror = { workspace = true }
-bouncy-dom = { path = "../bouncy-dom" }
-bouncy-fetch = { path = "../bouncy-fetch" }
+bouncy-dom = { path = "../bouncy-dom", version = "0.1.2" }
+bouncy-fetch = { path = "../bouncy-fetch", version = "0.1.2" }
 tokio = { workspace = true }
 url = { workspace = true }
 
