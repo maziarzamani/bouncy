@@ -8,6 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/maziarzamani/bouncy/actions/workflows/ci.yml"><img src="https://github.com/maziarzamani/bouncy/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://crates.io/crates/bouncy-cli"><img src="https://img.shields.io/crates/v/bouncy-cli?logo=rust&label=crates.io" alt="crates.io"></a>
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-1.80%2B-orange?logo=rust&logoColor=white" alt="Rust 1.80+"></a>
   <a href="https://github.com/maziarzamani/bouncy/releases/latest"><img src="https://img.shields.io/github/v/release/maziarzamani/bouncy?logo=github&label=release" alt="Latest release"></a>
 </p>
@@ -42,7 +43,16 @@ If you need a real browser (screenshots, true layout-dependent behaviour, full W
 
 ## Install
 
-### Prebuilt binary (recommended)
+### From crates.io
+
+```bash
+cargo install bouncy-cli      # the `bouncy` CLI
+cargo install bouncy-mcp      # the MCP server binary
+```
+
+Pulls in V8 prebuilts on first build (~30 s download, no from-source V8 compile).
+
+### Prebuilt binary (no Rust toolchain needed)
 
 Grab the latest tarball / zip from [Releases](https://github.com/maziarzamani/bouncy/releases). Each tag publishes:
 
@@ -69,11 +79,36 @@ Rust 1.80+ ([rustup.rs](https://rustup.rs)), stable channel.
 ```bash
 git clone https://github.com/maziarzamani/bouncy
 cd bouncy
-cargo build --release -p bouncy-cli                          # 40 MB, with V8 + CDP
-cargo build --release -p bouncy-cli --no-default-features    # ~3.7 MB, no V8 (refuses JS pages)
+cargo build --release -p bouncy-cli      # the `bouncy` CLI
+cargo build --release -p bouncy-mcp      # the MCP server
 ```
 
 The default build pulls a prebuilt V8 binary on first run (~30 s, no from-source V8 compile).
+
+## Use as a library
+
+Every internal crate is published, so you can grab just the bits you need from another Rust project:
+
+```toml
+[dependencies]
+bouncy-fetch   = "0.1"   # HTTP client (hyper + rustls, no reqwest overhead)
+bouncy-extract = "0.1"   # streaming HTML title / text / link extractor
+bouncy-js      = "0.1"   # embedded V8 + DOM bridge
+bouncy-cdp     = "0.1"   # Chrome DevTools Protocol server
+bouncy-dom     = "0.1"   # spec-compliant HTML5 DOM tree
+```
+
+Tiny example — fetch a page and pull its title:
+
+```rust
+use bouncy_fetch::Fetcher;
+use bouncy_extract::extract_title;
+
+let fetcher = Fetcher::new()?;
+let resp = fetcher.get("https://example.com").await?;
+let title = extract_title(&resp.body)?;
+println!("{:?}", title);   // Some("Example Domain")
+```
 
 ## Quick Start
 
