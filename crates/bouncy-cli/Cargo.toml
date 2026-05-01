@@ -1,10 +1,11 @@
 [package]
 name = "bouncy-cli"
-version = "0.1.1"
+version = "0.1.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Tiny Rust headless browser for scraping (CLI binary)."
 
 [[bin]]
 name = "bouncy"
@@ -18,10 +19,10 @@ http-body-util = { workspace = true }
 bytes = { workspace = true }
 
 [dependencies]
-bouncy-fetch = { path = "../bouncy-fetch" }
-bouncy-extract = { path = "../bouncy-extract" }
-bouncy-js = { path = "../bouncy-js" }
-bouncy-cdp = { path = "../bouncy-cdp" }
+bouncy-fetch = { path = "../bouncy-fetch", version = "0.1.2" }
+bouncy-extract = { path = "../bouncy-extract", version = "0.1.2" }
+bouncy-js = { path = "../bouncy-js", version = "0.1.2" }
+bouncy-cdp = { path = "../bouncy-cdp", version = "0.1.2" }
 clap = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 url = { workspace = true }

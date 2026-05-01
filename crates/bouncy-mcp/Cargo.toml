@@ -1,10 +1,11 @@
 [package]
 name = "bouncy-mcp"
-version = "0.1.1"
+version = "0.1.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "MCP server exposing the bouncy headless browser as typed tools to LLM clients."
 
 [[bin]]
 name = "bouncy-mcp"
@@ -14,9 +15,9 @@ path = "src/main.rs"
 path = "src/lib.rs"
 
 [dependencies]
-bouncy-fetch = { path = "../bouncy-fetch" }
-bouncy-extract = { path = "../bouncy-extract" }
-bouncy-js = { path = "../bouncy-js" }
+bouncy-fetch = { path = "../bouncy-fetch", version = "0.1.2" }
+bouncy-extract = { path = "../bouncy-extract", version = "0.1.2" }
+bouncy-js = { path = "../bouncy-js", version = "0.1.2" }
 rmcp = { workspace = true, features = ["server", "macros", "transport-io", "schemars"] }
 tokio = { workspace = true, features = ["rt", "macros", "time", "io-util", "sync"] }
 serde = { workspace = true }
