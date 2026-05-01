@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.3](https://github.com/maziarzamani/bouncy/compare/v0.1.2...v0.1.3) (2026-05-01)
+
+
+### Misc
+
+* prepare workspace for crates.io publish ([918d7dd](https://github.com/maziarzamani/bouncy/commit/918d7ddd4a4fad1da90f7e0692e0c6f41191278e))
+* prepare workspace for crates.io publish ([b3453f0](https://github.com/maziarzamani/bouncy/commit/b3453f06675de42038928230b121d7cc0d98131d))
+
 ## [0.1.1](https://github.com/maziarzamani/bouncy/compare/v0.1.0...v0.1.1) (2026-04-30)
 
 
