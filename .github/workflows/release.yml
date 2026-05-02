@@ -121,26 +121,29 @@ jobs:
           cargo login "$TOKEN"
 
       # Publish each crate in dep order (leaves first, cli last).
-      # Skip any crate whose Cargo.toml version is already on
-      # crates.io — partial releases (some crates bumped, others not)
-      # are normal and shouldn't fail the run.
+      # Treat "already exists on crates.io" as success so partial
+      # releases don't fail the run.
       - name: Publish crates
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
           publish_if_new() {
             local crate="$1"
-            local version
-            version=$(cargo metadata --format-version 1 --no-deps \
-              | jq -r ".packages[] | select(.name==\"${crate}\") | .version")
-            if curl -sf "https://crates.io/api/v1/crates/${crate}/${version}" >/dev/null; then
-              echo ":: ${crate}@${version} already on crates.io, skipping"
-            else
-              echo ":: publishing ${crate}@${version}"
-              cargo publish -p "${crate}" --no-verify
+            local out rc
+            out=$(cargo publish -p "${crate}" --no-verify 2>&1)
+            rc=$?
+            echo "$out"
+            if [[ $rc -eq 0 ]]; then
+              echo ":: published ${crate}"
+              return 0
             fi
+            if grep -q "already exists on crates.io" <<< "$out"; then
+              echo ":: ${crate} already on crates.io, skipping"
+              return 0
+            fi
+            return $rc
           }
 
           for crate in bouncy-fetch bouncy-extract bouncy-dom bouncy-js bouncy-cdp bouncy-mcp bouncy-cli; do
-            publish_if_new "${crate}"
+            publish_if_new "${crate}" || { echo "::error::publish failed for ${crate}"; exit 1; }
           done
