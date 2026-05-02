@@ -18,8 +18,10 @@ repository = "https://github.com/maziarzamani/bouncy"
 homepage = "https://github.com/maziarzamani/bouncy"
 
 [workspace.dependencies]
-# Core async stack.
-tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "macros"] }
+# Core async stack. `sync` enables tokio::sync::mpsc — the channel
+# that ferries scrape state events from worker tasks to the optional
+# --tui dashboard.
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "macros", "sync"] }
 bytes = "1"
 url = "2"
 thiserror = "2"
@@ -72,6 +74,15 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # schemars 1.x is required — that's the version rmcp 1.5 re-exports.
 rmcp = { version = "1.5", default-features = false }
 schemars = "1"
+
+# Terminal UI for `bouncy scrape --tui`. crossterm picked over termion
+# for cross-platform (Windows ConPTY) support.
+ratatui = "0.30"
+crossterm = "0.29"
+
+# Stable insertion-order map — used by the TUI to keep URL rows in the
+# order they were enqueued instead of jittering on every event.
+indexmap = "2"
 
 # ---------------------------------------------------------------------------
 # Release profile — tuned for binary size + steady-state perf.

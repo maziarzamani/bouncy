@@ -15,6 +15,9 @@
 
 mod scrape;
 
+#[cfg(feature = "tui")]
+mod scrape_tui;
+
 use std::io::Write;
 use std::sync::Arc;
 
@@ -142,6 +145,11 @@ enum Cmd {
         /// `delay * 2^attempt` (capped at 30 s).
         #[arg(long = "retry-delay-ms", default_value_t = 250)]
         retry_delay_ms: u64,
+        /// Live ratatui dashboard instead of the JSON / text summary.
+        /// Off by default. Requires stdout to be a terminal.
+        #[cfg(feature = "tui")]
+        #[arg(long, default_value_t = false)]
+        tui: bool,
     },
     /// Run a Chrome DevTools Protocol server (Playwright drop-in).
     Serve {
@@ -222,20 +230,50 @@ async fn main() -> anyhow::Result<()> {
             max_redirects,
             retry,
             retry_delay_ms,
+            #[cfg(feature = "tui")]
+            tui,
             ..
         } => {
+            #[cfg(feature = "tui")]
+            if tui {
+                use std::io::IsTerminal;
+                if !std::io::stdout().is_terminal() {
+                    anyhow::bail!("--tui requires stdout to be a terminal; got pipe / redirect");
+                }
+                let total_urls = urls.len();
+                let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                let scrape_handle = tokio::spawn(scrape::scrape(
+                    urls,
+                    concurrency,
+                    format,
+                    eval,
+                    cookie_jar,
+                    block_trackers,
+                    block_hosts,
+                    ca_files,
+                    max_redirects,
+                    retry,
+                    retry_delay_ms,
+                    Some(tx),
+                ));
+                let tui_result = scrape_tui::run_tui(rx, total_urls).await;
+                scrape_handle.abort();
+                let _ = scrape_handle.await;
+                return tui_result;
+            }
             scrape::scrape(
                 urls,
                 concurrency,
-                &format,
-                eval.as_deref(),
-                cookie_jar.as_deref(),
+                format,
+                eval,
+                cookie_jar,
                 block_trackers,
-                &block_hosts,
-                &ca_files,
+                block_hosts,
+                ca_files,
                 max_redirects,
                 retry,
                 retry_delay_ms,
+                None,
             )
             .await
         }
