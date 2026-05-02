@@ -222,6 +222,16 @@ claude mcp add bouncy bouncy-mcp
 
 V8 startup is lazy — sessions that only call `fetch` / `extract_*` never boot V8. The first JS-using call (`js_eval`, or `scrape` with `eval` / `selector`) takes 2–3 s; subsequent JS calls reuse the warm isolate.
 
+#### Debugging tool calls
+
+To poke at the MCP server interactively without going through Claude (great for verifying tools, seeing schemas, sanity-checking responses), use the official inspector:
+
+```bash
+npx @modelcontextprotocol/inspector bouncy-mcp
+```
+
+Opens a web UI where you can list every tool, fill in arguments, fire calls, and see the raw JSON-RPC traffic.
+
 ### CDP server (Playwright)
 
 ```bash
