@@ -132,20 +132,33 @@ jobs:
             exit 1
           fi
           cargo login "$TOKEN"
-      # cargo publish has its own "wait for the registry index to
-      # update" between dependent uploads, so we don't need explicit
-      # sleeps. Order matters though: deps first, consumers last.
-      - name: Publish bouncy-fetch
-        run: cargo publish -p bouncy-fetch --no-verify
-      - name: Publish bouncy-extract
-        run: cargo publish -p bouncy-extract --no-verify
-      - name: Publish bouncy-dom
-        run: cargo publish -p bouncy-dom --no-verify
-      - name: Publish bouncy-js
-        run: cargo publish -p bouncy-js --no-verify
-      - name: Publish bouncy-cdp
-        run: cargo publish -p bouncy-cdp --no-verify
-      - name: Publish bouncy-mcp
-        run: cargo publish -p bouncy-mcp --no-verify
-      - name: Publish bouncy-cli
-        run: cargo publish -p bouncy-cli --no-verify
+
+      # Publish each crate in dep order (leaves first, cli last). Skip
+      # any crate whose Cargo.toml version is already on crates.io —
+      # release-please's `linked-versions` plugin only bumps crates
+      # with bump-triggering commits in their path, so it's normal for
+      # a release tag to leave some crates unchanged. Without this
+      # guard, the first unchanged crate hits "already exists" and
+      # nukes the whole job. cargo publish has its own "wait for the
+      # registry index to update" between dependent uploads, so no
+      # explicit sleeps are needed.
+      - name: Publish crates
+        run: |
+          set -euo pipefail
+
+          publish_if_new() {
+            local crate="$1"
+            local version
+            version=$(cargo metadata --format-version 1 --no-deps \
+              | jq -r ".packages[] | select(.name==\"${crate}\") | .version")
+            if curl -sf "https://crates.io/api/v1/crates/${crate}/${version}" >/dev/null; then
+              echo ":: ${crate}@${version} already on crates.io, skipping"
+            else
+              echo ":: publishing ${crate}@${version}"
+              cargo publish -p "${crate}" --no-verify
+            fi
+          }
+
+          for crate in bouncy-fetch bouncy-extract bouncy-dom bouncy-js bouncy-cdp bouncy-mcp bouncy-cli; do
+            publish_if_new "${crate}"
+          done
