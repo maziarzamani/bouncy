@@ -1,20 +1,5 @@
 name: release
 
-# Builds release tarballs / zips when a `v*` tag is pushed and
-# uploads them to the GitHub Release. Once the matrix is green, a
-# follow-up job publishes every workspace crate to crates.io in
-# dependency order using the CRATES_IO_TOKEN repo secret.
-#
-# `workflow_dispatch` is supported for ad-hoc reruns. Be aware that
-# dispatching against a tag reads THIS workflow file from that tag,
-# so a workflow fix made after the tag won't apply on a re-dispatch.
-# In that situation, force-move the tag to a commit that has the fix
-# (admin bypass on the v* tag protection rule is required) and the
-# subsequent push event will use the new file.
-#
-# Auto-trigger on tag push relies on release-please pushing tags via
-# a PAT, NOT GITHUB_TOKEN — see release-please.yml header for setup.
-
 on:
   push:
     tags:
@@ -135,15 +120,10 @@ jobs:
           fi
           cargo login "$TOKEN"
 
-      # Publish each crate in dep order (leaves first, cli last). Skip
-      # any crate whose Cargo.toml version is already on crates.io —
-      # release-please's `linked-versions` plugin only bumps crates
-      # with bump-triggering commits in their path, so it's normal for
-      # a release tag to leave some crates unchanged. Without this
-      # guard, the first unchanged crate hits "already exists" and
-      # nukes the whole job. cargo publish has its own "wait for the
-      # registry index to update" between dependent uploads, so no
-      # explicit sleeps are needed.
+      # Publish each crate in dep order (leaves first, cli last).
+      # Skip any crate whose Cargo.toml version is already on
+      # crates.io — partial releases (some crates bumped, others not)
+      # are normal and shouldn't fail the run.
       - name: Publish crates
         run: |
           set -euo pipefail

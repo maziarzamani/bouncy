@@ -1,33 +1,13 @@
 name: release-please
 
-# Maintains an open "Release PR" on main: every push that introduces a
-# `feat:` / `fix:` / etc commit (Conventional Commits) updates the PR's
-# version bump and CHANGELOG entry. Merging the PR creates a `vX.Y.Z`
-# tag, which fires `release.yml` to build + attach the tarballs and
-# publish to crates.io.
-#
-# IMPORTANT: this workflow needs a PAT, not GITHUB_TOKEN.
-# GitHub policy: tags pushed by GITHUB_TOKEN do NOT trigger downstream
-# workflows. With GITHUB_TOKEN here the tag would land but release.yml
-# would never auto-fire — you'd have to dispatch it manually after
-# every release-please merge, AND that manual dispatch reads release.yml
-# from the tagged ref, so any workflow fix made after the tag wouldn't
-# apply on a re-dispatch (we hit this with v0.1.4 — see CHANGELOG).
-#
-# Using a PAT (RELEASE_PLEASE_TOKEN secret) makes release-please push
-# the tag as the user, which DOES trigger release.yml — automatic
-# end-to-end pipeline, no manual dispatch, no stale-workflow gotcha.
-#
-# Setup: see docs/RELEASE.md for how to mint and store the PAT.
-
 on:
   push:
     branches:
       - main
 
 permissions:
-  contents: write          # tag / commit the version bump
-  pull-requests: write     # open & update the release PR
+  contents: write
+  pull-requests: write
 
 jobs:
   release-please:
@@ -35,13 +15,7 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v4
         with:
-          # PAT (not GITHUB_TOKEN) so the tag push triggers release.yml.
-          # Falls back to GITHUB_TOKEN if the secret isn't set, in which
-          # case downstream automation is broken — see header comment.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-          # Explicit target-branch — without this the action falls back
-          # to the GitHub-configured default branch, which is currently
-          # `claude/new-plan-JXUOu` and doesn't have our config files.
           target-branch: main
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
