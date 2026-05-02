@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="assets/logo.png" alt="bouncy" width="520">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/logo-light.png">
+    <img src="assets/logo-dark.png" alt="bouncy" width="520">
+  </picture>
 </p>
 
 <p align="center">
