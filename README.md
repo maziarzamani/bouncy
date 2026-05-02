@@ -29,6 +29,7 @@ bouncy is a web scraper. Tiny, fast, ships as a single binary — no Node, no Ch
 - **Lean** — 10–21 MB resident per page; ~40 MB binary with V8 or ~3.7 MB without.
 - **Stealth, built in** — hides `navigator.webdriver`, randomizes canvas / audio / WebGPU / battery fingerprints per session.
 - **Production touches** — JSON cookie jar, tracker blocklist (extensible), custom CAs, HTTP CONNECT proxy, HTTP/2 with connection pooling.
+- **Live TUI dashboard** — `bouncy scrape <urls> --tui` swaps the JSON summary for a live ratatui UI: per-URL status grid, throughput, p50/p95 latency, status histogram. Off by default; opt-in flag.
 - **Cross-platform binaries** — Linux x86_64, macOS Apple Silicon, Windows x86_64.
 
 ## Why bouncy
@@ -190,6 +191,16 @@ bouncy scrape url1 url2 url3 \
   --format json
 ```
 
+#### Live dashboard (`--tui`)
+
+For a long parallel job, swap the JSON / text summary for a live ratatui dashboard — per-URL status grid (queued / in-flight / 200 / retry / failed), throughput gauge, p50 / p95 / max latency, status code histogram. Off by default; explicit opt-in:
+
+```bash
+bouncy scrape urls.txt --concurrency 50 --tui
+```
+
+`q` (or `Esc`) quits, `↑↓` / `jk` scrolls the URL list, `PgUp` / `PgDn` pages. Requires stdout to be a terminal — piping or redirecting with `--tui` set is rejected with an error so scripts never end up with TUI escape codes in their output. Built behind the default-on `tui` Cargo feature; `--no-default-features` builds skip the ratatui + crossterm dep tree entirely.
+
 ### MCP server
 
 `bouncy-mcp` is a separate binary (shipped in the same release tarball) that exposes bouncy as a Model Context Protocol server, so LLM clients like Claude Desktop and Claude Code can call bouncy as typed tools instead of shelling out.
@@ -301,6 +312,7 @@ Scrape multiple URLs in parallel.
 | `--max-redirects` | `10` | Hops to follow on 3xx. 0 disables following. |
 | `--retry` | `0` | Retry transient failures (network errors, 429, 5xx) up to N times per URL |
 | `--retry-delay-ms` | `250` | Initial backoff. Each retry waits `delay × 2^attempt`, capped at 30 s |
+| `--tui` | off | Live ratatui dashboard instead of the JSON / text summary. Requires stdout to be a terminal. |
 
 ### `bouncy serve`
 
