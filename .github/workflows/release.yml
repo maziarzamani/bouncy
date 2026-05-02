@@ -5,13 +5,15 @@ name: release
 # follow-up job publishes every workspace crate to crates.io in
 # dependency order using the CRATES_IO_TOKEN repo secret.
 #
-# `workflow_dispatch` is supported for ad-hoc reruns. Note: tags
-# pushed by the release-please bot use GITHUB_TOKEN, which by
-# GitHub policy does NOT trigger downstream workflows. To get this
-# to fire automatically on bot-pushed tags, configure
-# release-please.yml to use a PAT instead of the default
-# GITHUB_TOKEN. Without that, dispatch this workflow manually
-# after a release-please merge: `gh workflow run release.yml --ref vX.Y.Z`.
+# `workflow_dispatch` is supported for ad-hoc reruns. Be aware that
+# dispatching against a tag reads THIS workflow file from that tag,
+# so a workflow fix made after the tag won't apply on a re-dispatch.
+# In that situation, force-move the tag to a commit that has the fix
+# (admin bypass on the v* tag protection rule is required) and the
+# subsequent push event will use the new file.
+#
+# Auto-trigger on tag push relies on release-please pushing tags via
+# a PAT, NOT GITHUB_TOKEN — see release-please.yml header for setup.
 
 on:
   push:
