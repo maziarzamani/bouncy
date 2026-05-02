@@ -32,6 +32,29 @@ bouncy is a web scraper. Tiny, fast, ships as a single binary — no Node, no Ch
 - **Live TUI dashboard** — `bouncy scrape <urls> --tui` swaps the JSON summary for a live ratatui UI: per-URL status grid, throughput, p50/p95 latency, status histogram. Off by default; opt-in flag.
 - **Cross-platform binaries** — Linux x86_64, macOS Apple Silicon, Windows x86_64.
 
+## See it
+
+```text
+┌ bouncy scrape — 47/200 done · 6 active ────────────────────────────────────┐
+│ ┌ URLs ──────────────────────────────────────┐ ┌ Throughput ─────────────┐ │
+│ │ ✓ 200  142ms  https://example.com/a   "Ti…│ │ ▓▓▓▓▓▓▓░░░░░ 18.0 req/s │ │
+│ │ ✓ 200  311ms  https://example.com/b   "Ti…│ └─────────────────────────┘ │
+│ │ ⟳ ··· (try 2)  https://example.com/c       │ ┌ Latency ────────────────┐ │
+│ │ ✗ 503  retry 3 https://example.com/d       │ │ p50  168 ms             │ │
+│ │ … j/k or arrows to scroll                  │ │ p95  742 ms             │ │
+│ │                                            │ │ max  1.2 s              │ │
+│ └────────────────────────────────────────────┘ └─────────────────────────┘ │
+│                                                ┌ Status ─────────────────┐ │
+│                                                │ 200 ███████████ 38      │ │
+│                                                │ 301 ██ 4                │ │
+│                                                │ 503 █ 2  err █ 3        │ │
+│                                                └─────────────────────────┘ │
+│ q quit · ↑↓/jk scroll · PgUp/PgDn page                                     │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+`bouncy scrape urls.txt --concurrency 50 --tui` — live status grid for every URL, throughput rate, p50/p95/max latency, response-code histogram. Updates at 10 Hz. Falls through to the classic JSON / text output when `--tui` isn't set, so scripts piping to `jq` keep working.
+
 ## Why bouncy
 
 | | bouncy | Playwright |
