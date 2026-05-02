@@ -11,6 +11,10 @@ description = "Tiny Rust headless browser for scraping (CLI binary)."
 name = "bouncy"
 path = "src/main.rs"
 
+[features]
+default = ["tui"]
+tui = ["dep:ratatui", "dep:crossterm", "dep:indexmap"]
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 hyper = { workspace = true, features = ["server"] }
@@ -24,10 +28,13 @@ bouncy-extract = { path = "../bouncy-extract", version = "0.1.2" }
 bouncy-js = { path = "../bouncy-js", version = "0.1.2" }
 bouncy-cdp = { path = "../bouncy-cdp", version = "0.1.2" }
 clap = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync"] }
 url = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 futures-util = { workspace = true }
 bytes = { workspace = true }
+ratatui = { workspace = true, optional = true }
+crossterm = { workspace = true, optional = true }
+indexmap = { workspace = true, optional = true }
