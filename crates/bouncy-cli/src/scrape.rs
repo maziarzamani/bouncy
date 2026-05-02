@@ -100,13 +100,45 @@ pub struct ScrapeRow {
     pub status: u16,
 }
 
-#[derive(Serialize)]
-pub struct ScrapeReport {
-    pub total_urls: usize,
-    pub concurrency: usize,
-    pub total_time_ms: u64,
-    pub avg_time_ms: f64,
-    pub results: Vec<ScrapeRow>,
+/// Render the per-URL rows as either tab-separated text or pretty
+/// JSON. Pure (no I/O) so the formatting can be unit-tested
+/// independently of the network-driven scrape.
+pub(crate) fn format_summary(
+    rows: &[ScrapeRow],
+    format: &str,
+    total_time_ms: u64,
+    concurrency: usize,
+    avg_time_ms: f64,
+) -> anyhow::Result<String> {
+    use std::fmt::Write as _;
+    match format {
+        "text" => {
+            let mut s = String::new();
+            for r in rows {
+                writeln!(s, "{}ms\t{}\t{}", r.time_ms, r.url, r.title)?;
+            }
+            Ok(s)
+        }
+        _ => {
+            #[derive(Serialize)]
+            struct Report<'a> {
+                total_urls: usize,
+                concurrency: usize,
+                total_time_ms: u64,
+                avg_time_ms: f64,
+                results: &'a [ScrapeRow],
+            }
+            let mut s = serde_json::to_string_pretty(&Report {
+                total_urls: rows.len(),
+                concurrency,
+                total_time_ms,
+                avg_time_ms,
+                results: rows,
+            })?;
+            s.push('\n');
+            Ok(s)
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -276,26 +308,17 @@ pub async fn scrape(
         0.0
     };
 
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
-    match format.as_str() {
-        "text" => {
-            for r in &rows {
-                writeln!(out, "{}ms\t{}\t{}", r.time_ms, r.url, r.title)?;
-            }
-        }
-        _ => {
-            let report = ScrapeReport {
-                total_urls: rows.len(),
-                concurrency,
-                total_time_ms,
-                avg_time_ms,
-                results: rows,
-            };
-            writeln!(out, "{}", serde_json::to_string_pretty(&report)?)?;
-        }
+    // When `tx` is set, the caller is rendering a live TUI on the
+    // alt-screen — writing JSON / text to stdout from this task races
+    // the TUI's draws and corrupts the display. Skip the dump in that
+    // mode; the TUI is the user-facing output.
+    if tx.is_none() {
+        let summary = format_summary(&rows, &format, total_time_ms, concurrency, avg_time_ms)?;
+        let stdout = std::io::stdout();
+        let mut out = stdout.lock();
+        out.write_all(summary.as_bytes())?;
+        drop(out);
     }
-    drop(out);
 
     if let Some(j) = jar {
         save_cookie_jar(cookie_jar_path.as_deref(), &j)?;
@@ -349,5 +372,58 @@ mod tests {
     fn backoff_handles_zero_base() {
         assert_eq!(backoff_ms(0, 0), 0);
         assert_eq!(backoff_ms(0, 5), 0);
+    }
+
+    fn row(url: &str, title: &str, time_ms: u64, status: u16) -> ScrapeRow {
+        ScrapeRow {
+            url: url.into(),
+            title: title.into(),
+            eval: None,
+            time_ms,
+            worker: 0,
+            retries: 0,
+            status,
+        }
+    }
+
+    #[test]
+    fn format_text_summary_emits_one_line_per_row() {
+        let rows = vec![
+            row("https://a", "Alpha", 142, 200),
+            row("https://b", "Bravo", 311, 200),
+        ];
+        let s = format_summary(&rows, "text", 500, 4, 226.5).unwrap();
+        assert_eq!(s, "142ms\thttps://a\tAlpha\n311ms\thttps://b\tBravo\n");
+    }
+
+    #[test]
+    fn format_json_summary_includes_report_envelope() {
+        let rows = vec![row("https://a", "T", 100, 200)];
+        let s = format_summary(&rows, "json", 200, 8, 100.0).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["total_urls"], 1);
+        assert_eq!(v["concurrency"], 8);
+        assert_eq!(v["total_time_ms"], 200);
+        assert_eq!(v["avg_time_ms"], 100.0);
+        assert_eq!(v["results"][0]["url"], "https://a");
+        assert_eq!(v["results"][0]["status"], 200);
+        assert!(s.ends_with('\n'));
+    }
+
+    #[test]
+    fn format_summary_empty_rows() {
+        assert_eq!(format_summary(&[], "text", 0, 1, 0.0).unwrap(), "");
+        let v: serde_json::Value =
+            serde_json::from_str(&format_summary(&[], "json", 0, 1, 0.0).unwrap()).unwrap();
+        assert_eq!(v["total_urls"], 0);
+        assert_eq!(v["results"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn format_summary_unknown_format_falls_back_to_json() {
+        // Mirrors the dispatch in scrape() — anything not "text" is JSON.
+        let rows = vec![row("https://a", "T", 1, 200)];
+        let s = format_summary(&rows, "yaml", 1, 1, 1.0).unwrap();
+        assert!(serde_json::from_str::<serde_json::Value>(&s).is_ok());
     }
 }
