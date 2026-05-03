@@ -33,7 +33,7 @@ bouncy is a web scraper. Tiny, fast, ships as a single binary — no Node, no Ch
 - **Per-host rate limiting** — `bouncy scrape <urls> --per-host-concurrency 2` caps any single origin to N in-flight requests. Avoids hammering one server when scraping a list that hits the same host repeatedly.
 - **Configurable User-Agent** — `--user-agent` on `fetch` / `scrape`, with a sensible default of `bouncy/<version> (+repo URL)` so site operators can identify and reach you.
 - **Live TUI dashboard** — `bouncy scrape <urls> --tui` swaps the JSON summary for a live ratatui UI: per-URL status grid, throughput, p50/p95 latency, status histogram. Off by default; opt-in flag.
-- **Stateful browse sessions (library, in progress)** — `bouncy-browse` crate ships `BrowseSession` with `open` / `click` / `fill` / `read` / `goto` / `eval` and structured page snapshots (forms, links, buttons, headings, meta). Foundation for an upcoming `bouncy browse` CLI subcommand and `bouncy_browse_*` MCP tools that let LLMs drive multi-step browsing flows autonomously.
+- **Stateful browse sessions (library, in progress)** — `bouncy-browse` crate ships `BrowseSession` with `open` / `click` / `fill` / `submit` / `goto` / `read` / `eval` and structured page snapshots (forms, links, buttons, headings, meta). `submit` handles real HTTP form submission (POST + GET) and JS-only forms transparently. Foundation for an upcoming `bouncy browse` CLI subcommand and `bouncy_browse_*` MCP tools that let LLMs drive multi-step browsing flows autonomously.
 - **Cross-platform binaries** — Linux x86_64, macOS Apple Silicon, Windows x86_64.
 
 ## See it
@@ -132,16 +132,25 @@ Or drive a stateful browse session — cookies, V8, DOM all persist across steps
 use bouncy_browse::{BrowseSession, BrowseOpts, ReadMode};
 
 let (session, snap) =
-    BrowseSession::open("https://example.com", BrowseOpts::default()).await?;
-println!("{}", snap.title);                          // "Example Domain"
+    BrowseSession::open("https://help.com", BrowseOpts::default()).await?;
+println!("{}", snap.title);                       // e.g. "Help Center"
 
-// Snapshots list every form / link / button / input on the page with a
-// stable selector — pick one and act on it. Same session handles the
-// whole flow; cookies replay automatically across navigations.
-let _ = session.click("a").await?;                   // clicks the first link
+// Snapshots list every form / link / button / input on the page with
+// a stable selector — pick one and act on it. The same session handles
+// the whole flow; cookies replay automatically across navigations.
+session.click("a[href='/signup']").await?;        // navigate to signup
+session.fill("input[name=name]", "Maziar").await?;
+session.fill("input[name=email]", "me@x.test").await?;
+session.submit("form#signup").await?;             // submit the form
 let h1 = session.read("h1", ReadMode::Text).await?;
-println!("{:?}", h1);
+println!("{:?}", h1);                             // ["Welcome, Maziar!"]
 ```
+
+`submit` handles three cases without you having to think about it:
+the form has an `action` attribute (real HTTP `POST` / `GET` from the
+field values), the form is JS-only (a `submit` event fires and the
+page's handler runs), or the selector hits a submit `<button>` rather
+than the `<form>` itself (it climbs to the enclosing form).
 
 ## Quick Start
 

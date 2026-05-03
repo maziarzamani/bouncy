@@ -135,6 +135,23 @@ impl BrowseSession {
         .await
     }
 
+    /// Submit the form matched by `selector`. Three branches:
+    ///   1. Form has an `action` attribute → build a real HTTP request
+    ///      from the form's fields (urlencoded body for POST, query
+    ///      string for GET) and load the response in this session.
+    ///   2. Form has no `action` (JS-only handler) → dispatch a
+    ///      `submit` event on the form; if the handler navigates via
+    ///      `location.href = …`, that gets drained.
+    ///   3. `selector` matches a submit `<button>` rather than a form →
+    ///      climb to the enclosing `<form>` and apply the rules above.
+    pub async fn submit(&self, selector: &str) -> Result<PageSnapshot, BrowseError> {
+        self.send(|reply| Command::Submit {
+            selector: selector.to_string(),
+            reply,
+        })
+        .await
+    }
+
     /// Read text / HTML / attribute values from every element matching
     /// `selector`. Pure read; doesn't mutate state and returns no snapshot.
     pub async fn read(&self, selector: &str, mode: ReadMode) -> Result<Vec<String>, BrowseError> {
@@ -214,6 +231,10 @@ enum Command {
     Fill {
         selector: String,
         value: String,
+        reply: oneshot::Sender<Result<PageSnapshot, BrowseError>>,
+    },
+    Submit {
+        selector: String,
         reply: oneshot::Sender<Result<PageSnapshot, BrowseError>>,
     },
     Read {
@@ -355,6 +376,10 @@ fn actor_main(
                 let result = run_fill(&mut state, &outer_handle, &selector, &value);
                 let _ = reply.send(result);
             }
+            Command::Submit { selector, reply } => {
+                let result = run_submit(&mut state, &outer_handle, &selector);
+                let _ = reply.send(result);
+            }
             Command::Read {
                 selector,
                 mode,
@@ -381,6 +406,7 @@ fn send_construction_failure(cmd: Command, e: &BrowseError) {
         Command::Goto { reply, .. }
         | Command::Click { reply, .. }
         | Command::Fill { reply, .. }
+        | Command::Submit { reply, .. }
         | Command::Snapshot { reply, .. } => {
             let _ = reply.send(Err(err()));
         }
@@ -443,6 +469,156 @@ fn run_fill(
     })?;
     state.drain_navs(handle)?;
     state.snapshot_now()
+}
+
+/// Implements the `submit` primitive — three branches per `BrowseSession::submit`'s
+/// docs. The form-introspection happens in JS (so we don't have to climb /
+/// extract in Rust); we then build a real HTTP request from the result.
+fn run_submit(
+    state: &mut ActorState,
+    handle: &tokio::runtime::Handle,
+    selector: &str,
+) -> Result<PageSnapshot, BrowseError> {
+    // Find the enclosing form, extract its action / method / fields.
+    // Returns JSON: {action: string|null, method: string, fields: [[name,value], …]}
+    // Throws if selector matches nothing OR if no enclosing <form> is found.
+    let intro_expr = format!(
+        r#"(function(){{
+            var node = document.querySelector({sel});
+            if (!node) throw new Error('no match');
+            var form = node;
+            while (form && form.tagName !== 'FORM') form = form.parentNode;
+            if (!form) throw new Error('no enclosing form');
+            var action = form.getAttribute('action');
+            var method = (form.getAttribute('method') || 'GET').toUpperCase();
+            var fields = [];
+            // bouncy-dom's selector grammar is single-clause — no comma
+            // unions yet — so we run three separate queries and merge in
+            // document order via NodeId. Each list is already in document
+            // order; we don't try to interleave them precisely (real
+            // submission order would require tree-walking) but for almost
+            // every form it's identical.
+            function collect(tag) {{
+                var list = form.querySelectorAll(tag);
+                for (var i = 0; i < list.length; i++) {{
+                    var e = list[i];
+                    var name = e.getAttribute('name');
+                    if (!name) continue;
+                    var type = (e.getAttribute('type') || '').toLowerCase();
+                    // Skip unchecked checkboxes/radios. bouncy-js doesn't
+                    // yet polyfill the `.checked` IDL setter, so we read
+                    // the attribute (HTML-defined initial state). Good
+                    // enough for signup-style flows; revisit if a target
+                    // site toggles checkboxes via JS.
+                    if ((type === 'checkbox' || type === 'radio')
+                        && e.getAttribute('checked') === null) continue;
+                    // Skip disabled per HTML form-submission rules.
+                    if (e.getAttribute('disabled') !== null) continue;
+                    var value = e.value;
+                    if (value === undefined || value === null) {{
+                        value = e.getAttribute('value') || '';
+                    }}
+                    fields.push([name, String(value)]);
+                }}
+            }}
+            collect('input');
+            collect('textarea');
+            collect('select');
+            return JSON.stringify({{action: action, method: method, fields: fields}});
+        }})()"#,
+        sel = js_string(selector),
+    );
+    let intel = state.rt.eval(&intro_expr).map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("no match") {
+            BrowseError::NoMatch(selector.to_string())
+        } else if msg.contains("no enclosing form") {
+            BrowseError::Io(format!(
+                "selector {selector:?} is not a form and is not inside one"
+            ))
+        } else {
+            BrowseError::Js(e)
+        }
+    })?;
+    // Eval results come back as JSON-quoted strings; strip the outer
+    // quoting, then parse the inner JSON.
+    let parsed: FormIntel = serde_json::from_str(&unquote_eval_result(&intel)).map_err(|e| {
+        BrowseError::Io(format!(
+            "parsing form intel JSON failed: {e} (raw: {intel})"
+        ))
+    })?;
+
+    match parsed.action.as_deref() {
+        Some(action) if !action.is_empty() => {
+            // Branch 1 + 2: real HTTP submission via the form's action.
+            let base = url::Url::parse(&state.current_url)?;
+            let target = base.join(action)?;
+            match parsed.method.as_str() {
+                "GET" => {
+                    let mut url_with_query = target;
+                    {
+                        let mut q = url_with_query.query_pairs_mut();
+                        for (name, value) in &parsed.fields {
+                            q.append_pair(name, value);
+                        }
+                    }
+                    state.navigate_blocking(url_with_query.as_str(), handle)?;
+                }
+                _ => {
+                    // POST (and anything we don't specifically GET) — build
+                    // a urlencoded body. Multipart / file uploads are out
+                    // of scope for v1.
+                    let body: String = url::form_urlencoded::Serializer::new(String::new())
+                        .extend_pairs(parsed.fields.iter().map(|(n, v)| (n.as_str(), v.as_str())))
+                        .finish();
+                    let req = bouncy_fetch::FetchRequest::new(target.as_str())
+                        .method("POST")
+                        .header("Content-Type", "application/x-www-form-urlencoded")
+                        .body_str(body);
+                    let resp = handle.block_on(state.fetcher.request(req))?;
+                    let html = std::str::from_utf8(&resp.body).map_err(|_| BrowseError::NotUtf8)?;
+                    state.rt.load(html, target.as_str())?;
+                    state.rt.run_inline_scripts()?;
+                    state.current_url = target.to_string();
+                    state.drain_navs(handle)?;
+                }
+            }
+        }
+        _ => {
+            // Branch 3: no action attr — let the page's JS handle it. We
+            // dispatch a `submit` event on the form (same way a real
+            // browser would when the user hits Enter / clicks submit), then
+            // drain any `location.href` redirects the handler triggers.
+            let dispatch = format!(
+                r#"(function(){{
+                    var node = document.querySelector({sel});
+                    var form = node;
+                    while (form && form.tagName !== 'FORM') form = form.parentNode;
+                    form.dispatchEvent(new Event('submit', {{bubbles:true, cancelable:true}}));
+                    return 'ok';
+                }})()"#,
+                sel = js_string(selector),
+            );
+            state.rt.eval(&dispatch)?;
+            state.drain_navs(handle)?;
+        }
+    }
+
+    state.snapshot_now()
+}
+
+#[derive(serde::Deserialize)]
+struct FormIntel {
+    action: Option<String>,
+    method: String,
+    fields: Vec<(String, String)>,
+}
+
+/// `Runtime::eval` returns a `String` that, for string-returning JS, is
+/// the JSON-quoted form (e.g. `"\"hello\""`). For our form-intel JSON
+/// we need to peel that outer layer to get the inner JSON.
+fn unquote_eval_result(s: &str) -> String {
+    serde_json::from_str::<String>(s).unwrap_or_else(|_| s.to_string())
 }
 
 fn run_read(
