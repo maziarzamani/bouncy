@@ -18,6 +18,7 @@ path = "src/lib.rs"
 bouncy-fetch = { path = "../bouncy-fetch", version = "0.1.2" }
 bouncy-extract = { path = "../bouncy-extract", version = "0.1.2" }
 bouncy-js = { path = "../bouncy-js", version = "0.1.2" }
+bouncy-dom = { path = "../bouncy-dom", version = "0.1.2" }
 rmcp = { workspace = true, features = ["server", "macros", "transport-io", "schemars"] }
 tokio = { workspace = true, features = ["rt", "macros", "time", "io-util", "sync"] }
 serde = { workspace = true }

@@ -11,6 +11,7 @@ use crate::tools::Cookie;
 
 const MAX_NAV_HOPS: u32 = 10;
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_request(
     url: &str,
     method: Option<&str>,
@@ -18,6 +19,7 @@ pub fn build_request(
     body: Option<&str>,
     cookies: Option<&[Cookie]>,
     basic_auth: Option<(&str, &str)>,
+    user_agent: Option<&str>,
 ) -> FetchRequest {
     let mut req = FetchRequest::new(url);
     if let Some(m) = method {
@@ -45,7 +47,33 @@ pub fn build_request(
         let encoded = B64.encode(format!("{user}:{pass}"));
         req = req.header("Authorization", format!("Basic {encoded}"));
     }
+    if let Some(ua) = user_agent {
+        // Per-request UA overrides the shared Fetcher's default via the
+        // last-write-wins logic in bouncy-fetch.
+        req = req.header("User-Agent", ua);
+    }
     req
+}
+
+/// Run a CSS selector against an HTML body and return one entry per
+/// match. When `attr` is set, returns attribute values (skipping
+/// elements without that attribute); otherwise returns text content.
+/// Used by both `do_fetch` and `do_scrape` for the `select` field.
+pub fn select_from_html(
+    html: &str,
+    selector: &str,
+    attr: Option<&str>,
+) -> Result<Vec<String>, ToolError> {
+    let doc = bouncy_dom::Document::parse(html)
+        .map_err(|e| ToolError::Internal(format!("html parse: {e}")))?;
+    let ids = doc.query_selector_all(selector);
+    Ok(match attr {
+        Some(a) => ids
+            .into_iter()
+            .filter_map(|id| doc.get_attribute(id, a))
+            .collect(),
+        None => ids.into_iter().map(|id| doc.text_content(id)).collect(),
+    })
 }
 
 pub fn looks_textual(headers: &http::HeaderMap) -> bool {
@@ -300,6 +328,7 @@ mod tests {
             Some(r#"{"a":1}"#),
             None,
             None,
+            None,
         );
         assert_eq!(req.url, "https://example.com/p");
         assert_eq!(req.method, "POST");
@@ -326,6 +355,7 @@ mod tests {
             None,
             Some(&cookies),
             None,
+            None,
         );
         let cookie = req
             .headers
@@ -337,7 +367,15 @@ mod tests {
 
     #[test]
     fn build_request_omits_cookie_header_when_list_empty() {
-        let req = build_request("https://example.com", None, None, None, Some(&[]), None);
+        let req = build_request(
+            "https://example.com",
+            None,
+            None,
+            None,
+            Some(&[]),
+            None,
+            None,
+        );
         assert!(req
             .headers
             .iter()
@@ -354,6 +392,7 @@ mod tests {
             None,
             None,
             Some(("user", "pw")),
+            None,
         );
         let auth = req
             .headers

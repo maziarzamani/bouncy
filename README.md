@@ -29,6 +29,9 @@ bouncy is a web scraper. Tiny, fast, ships as a single binary — no Node, no Ch
 - **Lean** — 10–21 MB resident per page; ~40 MB binary with V8 or ~3.7 MB without.
 - **Stealth, built in** — hides `navigator.webdriver`, randomizes canvas / audio / WebGPU / battery fingerprints per session.
 - **Production touches** — JSON cookie jar, tracker blocklist (extensible), custom CAs, HTTP CONNECT proxy, HTTP/2 with connection pooling.
+- **CSS-selector extraction** — `bouncy fetch <url> --select "h1"` returns the text of every match, one per line. Pair with `--attr href` for attribute values. Works on `scrape` too, where matches land in a `selected: [...]` field per row.
+- **Per-host rate limiting** — `bouncy scrape <urls> --per-host-concurrency 2` caps any single origin to N in-flight requests. Avoids hammering one server when scraping a list that hits the same host repeatedly.
+- **Configurable User-Agent** — `--user-agent` on `fetch` / `scrape`, with a sensible default of `bouncy/<version> (+repo URL)` so site operators can identify and reach you.
 - **Live TUI dashboard** — `bouncy scrape <urls> --tui` swaps the JSON summary for a live ratatui UI: per-URL status grid, throughput, p50/p95 latency, status histogram. Off by default; opt-in flag.
 - **Cross-platform binaries** — Linux x86_64, macOS Apple Silicon, Windows x86_64.
 
@@ -132,6 +135,20 @@ bouncy fetch https://example.com --dump links
 bouncy fetch https://example.com --dump text
 ```
 
+### Extract with a CSS selector
+
+```bash
+# Text content of every match, one per line.
+bouncy fetch https://example.com --select "h1"
+# → Example Domain
+
+# Attribute value of every match.
+bouncy fetch https://example.com --select "a" --attr href
+
+# Selector grammar today: tag, #id, .class, [attr], [attr=value]
+# (no combinators or pseudo-classes yet).
+```
+
 ### Run JavaScript
 
 ```bash
@@ -195,6 +212,17 @@ bouncy scrape url1 url2 url3 \
   --concurrency 25 \
   --eval "document.querySelector('h1').textContent" \
   --format json
+
+# Per-host throttle: at most 2 in-flight against any single origin
+# even with --concurrency 25, so you don't hammer one server.
+bouncy scrape urls.txt --concurrency 25 --per-host-concurrency 2
+
+# Selector extraction per row — adds a `selected: [...]` field to each
+# JSON row. No V8 boot required.
+bouncy scrape urls.txt --select "h1" --format json | jq '.results[].selected'
+
+# Identify yourself with a custom UA. Default identifies as bouncy.
+bouncy scrape urls.txt --user-agent "my-bot/1.0 (+contact@example.com)"
 ```
 
 #### Live dashboard (`--tui`)
@@ -213,13 +241,13 @@ bouncy scrape urls.txt --concurrency 50 --tui
 
 | Tool | Path | What it does |
 |---|---|---|
-| `fetch` | HTTP | Raw fetch with optional method / headers / body / basic auth / cookies / proxy |
+| `fetch` | HTTP | Raw fetch with optional method / headers / body / basic auth / cookies / proxy / **`user_agent`** / **`select`** + **`select_attr`** for CSS-selector extraction |
 | `extract_title` | static | `<title>` text from an HTML string |
 | `extract_text` | static | Visible body text from an HTML string |
 | `extract_links` | static | All `<a href>` links resolved against a base URL |
 | `js_eval` | V8 | Fetch a URL, boot V8, run a JS expression, return the result |
-| `scrape` | auto | Single URL: auto JS-vs-static branch, optional eval / selector wait, configurable retries |
-| `scrape_many` | auto | URL list, scraped sequentially |
+| `scrape` | auto | Single URL: auto JS-vs-static branch, optional eval / selector wait, configurable retries, plus `user_agent` and `select` / `select_attr` for static extraction |
+| `scrape_many` | auto | URL list, scraped sequentially. Accepts `user_agent`, `select`, `select_attr`, and `per_host_concurrency` (latter is advisory on the MCP today since runs are serialized) |
 
 **Claude Desktop** — add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or the equivalent on your platform:
 
@@ -280,8 +308,10 @@ Fetch and (optionally) render a single page.
 | Flag | Default | Description |
 |---|---|---|
 | `--dump` | `html` | Output: `html`, `text`, or `links` |
+| `--select` | — | CSS selector for static text extraction (one match per line). Bypasses `--dump`. |
+| `--attr` | — | Pair with `--select` to extract attribute values instead of text |
 | `--eval` | — | JavaScript expression to evaluate (boots V8) |
-| `--selector` | — | Wait for this CSS selector before dumping (boots V8) |
+| `--selector` | — | Wait for this CSS selector before dumping (boots V8). For static extraction use `--select` instead. |
 | `--wait` | `5` | Selector wait timeout in seconds |
 | `-X`, `--method` | `GET` | HTTP method |
 | `-H`, `--header` | — | Repeatable. Format: `Name: Value` |
@@ -308,7 +338,11 @@ Scrape multiple URLs in parallel.
 | Flag | Default | Description |
 |---|---|---|
 | `--concurrency` | `10` | Parallel workers |
+| `--per-host-concurrency` | — | Cap on simultaneous requests against any single host. Default: no per-host cap. |
 | `--eval` | — | JS expression per page (boots V8 per row when set) |
+| `--select` | — | CSS selector for static text/attribute extraction per row. Result lands in a `selected: [...]` field. |
+| `--attr` | — | Pair with `--select` to extract attribute values instead of text. |
+| `--user-agent` | — | UA override. Default: `bouncy/<version> (+repo URL)` |
 | `--format` | `json` | Output: `json` or `text` |
 | `--timeout` | `60` | Per-URL timeout in seconds |
 | `--cookie-jar` | — | JSON cookie jar; loaded before, saved after — persists across runs |

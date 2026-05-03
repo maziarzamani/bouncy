@@ -63,6 +63,9 @@ pub enum Error {
 
     #[error("redirect Location {0:?} could not be resolved against {1}")]
     BadRedirectLocation(String, String),
+
+    #[error("user_agent must be non-empty (bouncy refuses to send a missing UA — most servers reject it)")]
+    EmptyUserAgent,
 }
 
 #[derive(Debug, Clone)]
@@ -421,6 +424,15 @@ enum InnerClient {
     Proxied(Client<HttpsConnector<Tunnel<HttpConnector>>, Full<Bytes>>),
 }
 
+/// Default User-Agent the Fetcher sends when neither a builder nor a
+/// per-request override is set. Identifies bouncy and links to the
+/// project so site operators can find us if we cause trouble.
+pub const DEFAULT_USER_AGENT: &str = concat!(
+    "bouncy/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/maziarzamani/bouncy)"
+);
+
 pub struct Fetcher {
     client: InnerClient,
     request_timeout: Option<Duration>,
@@ -429,6 +441,9 @@ pub struct Fetcher {
     /// Maximum redirect hops to follow. 0 disables following entirely
     /// (the 3xx response surfaces to the caller).
     max_redirects: u32,
+    /// User-Agent header sent on every request unless the per-request
+    /// `FetchRequest` carries its own User-Agent.
+    user_agent: String,
 }
 
 impl Fetcher {
@@ -462,6 +477,10 @@ pub struct FetcherBuilder {
     extra_ca_files: Vec<PathBuf>,
     /// Maximum redirect hops. 0 disables following.
     max_redirects: u32,
+    /// User-Agent header sent on every request. Defaults to
+    /// `DEFAULT_USER_AGENT`. Per-request `User-Agent` headers still
+    /// override this on a case-insensitive match.
+    user_agent: String,
 }
 
 impl Default for FetcherBuilder {
@@ -475,6 +494,7 @@ impl Default for FetcherBuilder {
             tracker_blocklist: None,
             extra_ca_files: Vec::new(),
             max_redirects: 10,
+            user_agent: DEFAULT_USER_AGENT.to_string(),
         }
     }
 }
@@ -535,7 +555,22 @@ impl FetcherBuilder {
         self
     }
 
+    /// User-Agent header sent on every request. Replaces the default
+    /// `bouncy/<version>` UA. Per-request `User-Agent` headers still
+    /// override this (last-write-wins, case-insensitive).
+    ///
+    /// Empty strings are rejected at `build()` time — most servers
+    /// treat an empty UA as a bot signal and reject the request, and
+    /// "I forgot to set a UA" should fail loudly, not silently.
+    pub fn user_agent(mut self, ua: impl Into<String>) -> Self {
+        self.user_agent = ua.into();
+        self
+    }
+
     pub fn build(self) -> Result<Fetcher, Error> {
+        if self.user_agent.is_empty() {
+            return Err(Error::EmptyUserAgent);
+        }
         // TCP_NODELAY: hyper-util defaults to false. With Nagle on, the
         // request->response pipeline pays an extra ~40 ms RTT on cold
         // small requests. We always want low-latency.
@@ -589,6 +624,7 @@ impl FetcherBuilder {
             cookie_jar: self.cookie_jar,
             tracker_blocklist: self.tracker_blocklist,
             max_redirects: self.max_redirects,
+            user_agent: self.user_agent,
         })
     }
 }
@@ -678,6 +714,19 @@ impl Fetcher {
                 http::header::ACCEPT_ENCODING,
                 HeaderValue::from_static("gzip, deflate, br"),
             );
+        }
+
+        // Default User-Agent: identify as bouncy with crate version + URL.
+        // Per-request `User-Agent` headers override (last-write-wins).
+        // Same case-insensitive override pattern as Accept-Encoding above.
+        if !req
+            .headers
+            .iter()
+            .any(|(n, _)| n.eq_ignore_ascii_case("user-agent"))
+        {
+            if let Ok(v) = HeaderValue::try_from(self.user_agent.as_bytes()) {
+                header_map.append(http::header::USER_AGENT, v);
+            }
         }
 
         // Cookie jar: attach Cookie header for this origin if any.

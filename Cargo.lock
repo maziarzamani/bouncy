@@ -263,10 +263,11 @@ dependencies = [
 
 [[package]]
 name = "bouncy-cli"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "bouncy-cdp",
+ "bouncy-dom",
  "bouncy-extract",
  "bouncy-fetch",
  "bouncy-js",
@@ -353,6 +354,7 @@ version = "0.1.3"
 dependencies = [
  "anyhow",
  "base64",
+ "bouncy-dom",
  "bouncy-extract",
  "bouncy-fetch",
  "bouncy-js",

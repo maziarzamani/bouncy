@@ -56,10 +56,11 @@ async fn spawn_server() -> SocketAddr {
 }
 
 fn bouncy_bin() -> std::path::PathBuf {
-    // tests run with CARGO_BIN_EXE_<binname> set to the built binary path.
-    std::env::var("CARGO_BIN_EXE_bouncy")
-        .map(std::path::PathBuf::from)
-        .expect("CARGO_BIN_EXE_bouncy not set; run via `cargo test -p bouncy-cli`")
+    // CARGO_BIN_EXE_<binname> is a *compile-time* env var that Cargo
+    // populates when building integration tests for a package with a
+    // matching `[[bin]]`. Reading via `env!` resolves it at compile
+    // time; `std::env::var` returns NotPresent at runtime.
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_bouncy"))
 }
 
 fn run(args: &[&str]) -> std::process::Output {
