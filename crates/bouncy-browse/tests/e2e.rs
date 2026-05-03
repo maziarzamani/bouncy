@@ -46,3 +46,33 @@ async fn user_agent_override_visible_to_httpbin() {
         snap.text_summary
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn submit_real_form_against_httpbin_posts_field_values() {
+    // httpbin.org/forms/post serves a real HTML form that POSTs to /post,
+    // which echoes the request back as JSON. End-to-end: open → fill →
+    // submit → read the JSON for our values.
+    let (session, _) = BrowseSession::open("https://httpbin.org/forms/post", BrowseOpts::default())
+        .await
+        .expect("open httpbin form");
+    session
+        .fill("[name=custname]", "Maziar")
+        .await
+        .expect("fill custname");
+    session
+        .fill("[name=custtel]", "555-0100")
+        .await
+        .expect("fill custtel");
+    let snap = session.submit("form").await.expect("submit form");
+    // /post echoes JSON; the snapshot's text_summary will contain it.
+    assert!(
+        snap.text_summary.contains("Maziar"),
+        "expected POSTed custname to appear in /post echo, got: {}",
+        snap.text_summary
+    );
+    assert!(
+        snap.text_summary.contains("555-0100"),
+        "expected POSTed custtel to appear in /post echo, got: {}",
+        snap.text_summary
+    );
+}
