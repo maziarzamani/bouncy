@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.7](https://github.com/maziarzamani/bouncy/compare/v0.1.6...v0.1.7) (2026-05-03)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * bouncy-fetch bumped from 0.1.2 to 0.1.7
+    * bouncy-extract bumped from 0.1.2 to 0.1.7
+    * bouncy-js bumped from 0.1.2 to 0.1.7
+    * bouncy-cdp bumped from 0.1.2 to 0.1.7
+    * bouncy-dom bumped from 0.1.2 to 0.1.7
+
 ## [0.1.6](https://github.com/maziarzamani/bouncy/compare/v0.1.5...v0.1.6) (2026-05-03)
 
 
