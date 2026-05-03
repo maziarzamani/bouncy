@@ -1,6 +1,6 @@
 [package]
 name = "bouncy-cdp"
-version = "0.1.6"
+version = "0.1.7"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -8,8 +8,8 @@ repository.workspace = true
 description = "Chrome DevTools Protocol server used by bouncy: Playwright / puppeteer-core drop-in."
 
 [dependencies]
-bouncy-js = { path = "../bouncy-js", version = "0.1.2" }
-bouncy-fetch = { path = "../bouncy-fetch", version = "0.1.2" }
+bouncy-js = { path = "../bouncy-js", version = "0.1.7" }
+bouncy-fetch = { path = "../bouncy-fetch", version = "0.1.7" }
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros", "time", "sync"] }
 tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }

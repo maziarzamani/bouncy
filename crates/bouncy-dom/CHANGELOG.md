@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.7](https://github.com/maziarzamani/bouncy/compare/v0.1.6...v0.1.7) (2026-05-03)
+
+
+### CI / Build
+
+* enforce workspace lockstep + align all crates to 0.1.6 ([1c2fa4c](https://github.com/maziarzamani/bouncy/commit/1c2fa4c5e1de40336bac9edc427ed1dfca5d7540))
+* enforce workspace lockstep + align all crates to 0.1.6 ([7dbb593](https://github.com/maziarzamani/bouncy/commit/7dbb593203fd6484e4ca9abc9ec893e45b51c5fc))
+
 ## [0.1.3](https://github.com/maziarzamani/bouncy/compare/v0.1.2...v0.1.3) (2026-05-01)
 
 
