@@ -7,6 +7,7 @@
   "bump-patch-for-minor-pre-major": true,
   "draft": false,
   "prerelease": false,
+  "pull-request-title-pattern": "chore${scope}: release ${component} ${version}",
   "changelog-sections": [
     { "type": "feat",    "section": "Features"          },
     { "type": "fix",     "section": "Bug Fixes"         },
