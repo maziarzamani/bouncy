@@ -33,6 +33,7 @@ bouncy is a web scraper. Tiny, fast, ships as a single binary — no Node, no Ch
 - **Per-host rate limiting** — `bouncy scrape <urls> --per-host-concurrency 2` caps any single origin to N in-flight requests. Avoids hammering one server when scraping a list that hits the same host repeatedly.
 - **Configurable User-Agent** — `--user-agent` on `fetch` / `scrape`, with a sensible default of `bouncy/<version> (+repo URL)` so site operators can identify and reach you.
 - **Live TUI dashboard** — `bouncy scrape <urls> --tui` swaps the JSON summary for a live ratatui UI: per-URL status grid, throughput, p50/p95 latency, status histogram. Off by default; opt-in flag.
+- **Stateful browse sessions (library, in progress)** — `bouncy-browse` crate ships `BrowseSession` with `open` / `click` / `fill` / `read` / `goto` / `eval` and structured page snapshots (forms, links, buttons, headings, meta). Foundation for an upcoming `bouncy browse` CLI subcommand and `bouncy_browse_*` MCP tools that let LLMs drive multi-step browsing flows autonomously.
 - **Cross-platform binaries** — Linux x86_64, macOS Apple Silicon, Windows x86_64.
 
 ## See it
@@ -110,6 +111,7 @@ bouncy-extract = "0.1"   # streaming HTML title / text / link extractor
 bouncy-js      = "0.1"   # embedded V8 + DOM bridge
 bouncy-cdp     = "0.1"   # Chrome DevTools Protocol server
 bouncy-dom     = "0.1"   # spec-compliant HTML5 DOM tree
+bouncy-browse  = "0.1"   # stateful browser session: open / click / fill / read with structured snapshots
 ```
 
 Tiny example — fetch a page and pull its title:
@@ -122,6 +124,23 @@ let fetcher = Fetcher::new()?;
 let resp = fetcher.get("https://example.com").await?;
 let title = extract_title(&resp.body)?;
 println!("{:?}", title);   // Some("Example Domain")
+```
+
+Or drive a stateful browse session — cookies, V8, DOM all persist across steps:
+
+```rust
+use bouncy_browse::{BrowseSession, BrowseOpts, ReadMode};
+
+let (session, snap) =
+    BrowseSession::open("https://example.com", BrowseOpts::default()).await?;
+println!("{}", snap.title);                          // "Example Domain"
+
+// Snapshots list every form / link / button / input on the page with a
+// stable selector — pick one and act on it. Same session handles the
+// whole flow; cookies replay automatically across navigations.
+let _ = session.click("a").await?;                   // clicks the first link
+let h1 = session.read("h1", ReadMode::Text).await?;
+println!("{:?}", h1);
 ```
 
 ## Quick Start
