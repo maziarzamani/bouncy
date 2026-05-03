@@ -1,3 +1,4 @@
+pub mod browse_store;
 pub mod error;
 pub mod glue;
 pub mod server;

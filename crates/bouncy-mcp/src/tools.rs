@@ -167,3 +167,113 @@ pub struct ScrapeManyResult {
 pub struct ScrapeManyOutput {
     pub results: Vec<ScrapeManyResult>,
 }
+
+// =================================================================
+//  bouncy_browse_* — stateful browser primitives.
+//
+// Each `open` call creates a session and returns a `session_id`. All
+// subsequent tool calls take that id and either drive the same V8 +
+// cookie-jar + DOM state forward (click / fill / submit / goto / eval)
+// or read from it (read). Sessions auto-expire after 15 minutes idle
+// and are capped at 20 per server. Explicit `close` removes one early.
+// =================================================================
+
+/// `bouncy_browse_open`
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BrowseOpenInput {
+    pub url: String,
+    /// Override outgoing User-Agent. Default: `bouncy/<version> (+repo)`.
+    pub user_agent: Option<String>,
+    /// Enable bouncy's stealth patches (canvas/audio/WebGPU/battery
+    /// fingerprint randomization, hidden navigator.webdriver).
+    pub stealth: Option<bool>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct BrowseOpenOutput {
+    pub session_id: String,
+    pub snapshot: bouncy_browse::PageSnapshot,
+}
+
+/// `bouncy_browse_click`
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BrowseClickInput {
+    pub session_id: String,
+    /// CSS selector — bouncy-dom grammar today is single-clause:
+    /// tag, `#id`, `.class`, `[attr]`, `[attr=value]`.
+    pub selector: String,
+}
+
+/// `bouncy_browse_fill`
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BrowseFillInput {
+    pub session_id: String,
+    pub selector: String,
+    pub value: String,
+}
+
+/// `bouncy_browse_submit`
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BrowseSubmitInput {
+    pub session_id: String,
+    /// Selector for the form OR a submit button inside it. The primitive
+    /// climbs to the enclosing `<form>` automatically.
+    pub selector: String,
+}
+
+/// `bouncy_browse_goto`
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BrowseGotoInput {
+    pub session_id: String,
+    pub url: String,
+}
+
+/// `bouncy_browse_read`
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BrowseReadInput {
+    pub session_id: String,
+    pub selector: String,
+    /// `"text"` (default), `"html"`, or `"attr:NAME"` for attribute values.
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct BrowseReadOutput {
+    pub matches: Vec<String>,
+}
+
+/// `bouncy_browse_eval` — escape hatch for cases the higher-level
+/// primitives don't cover.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BrowseEvalInput {
+    pub session_id: String,
+    /// JS expression. Returned value is coerced to a string.
+    pub expr: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct BrowseEvalOutput {
+    pub result: String,
+    pub snapshot: bouncy_browse::PageSnapshot,
+}
+
+/// `bouncy_browse_close`
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BrowseCloseInput {
+    pub session_id: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct BrowseCloseOutput {
+    /// `true` if a session was removed; `false` if the id was unknown
+    /// (already expired or never existed).
+    pub closed: bool,
+}
+
+/// Output for every state-changing browse tool: returns the page
+/// snapshot that resulted from the action so the caller (LLM) doesn't
+/// have to ask for it separately.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct BrowseSnapshotOutput {
+    pub snapshot: bouncy_browse::PageSnapshot,
+}

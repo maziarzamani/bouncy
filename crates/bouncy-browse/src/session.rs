@@ -88,6 +88,16 @@ pub struct BrowseSession {
     cmd_tx: mpsc::UnboundedSender<Command>,
 }
 
+impl std::fmt::Debug for BrowseSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Don't expose internal channel handles; just enough to know
+        // whether the actor is still reachable.
+        f.debug_struct("BrowseSession")
+            .field("actor_alive", &!self.cmd_tx.is_closed())
+            .finish()
+    }
+}
+
 impl BrowseSession {
     /// Open a new session at `url`. Returns the session and the initial
     /// page snapshot in one round trip.
