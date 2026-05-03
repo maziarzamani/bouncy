@@ -244,7 +244,7 @@ dependencies = [
 
 [[package]]
 name = "bouncy-cdp"
-version = "0.1.3"
+version = "0.1.6"
 dependencies = [
  "bouncy-fetch",
  "bouncy-js",
@@ -263,7 +263,7 @@ dependencies = [
 
 [[package]]
 name = "bouncy-cli"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "bouncy-cdp",
@@ -288,7 +288,7 @@ dependencies = [
 
 [[package]]
 name = "bouncy-dom"
-version = "0.1.3"
+version = "0.1.6"
 dependencies = [
  "html5ever",
  "markup5ever_rcdom",
@@ -297,7 +297,7 @@ dependencies = [
 
 [[package]]
 name = "bouncy-extract"
-version = "0.1.3"
+version = "0.1.6"
 dependencies = [
  "criterion",
  "html-escape",
@@ -308,7 +308,7 @@ dependencies = [
 
 [[package]]
 name = "bouncy-fetch"
-version = "0.1.3"
+version = "0.1.6"
 dependencies = [
  "brotli",
  "bytes",
@@ -334,7 +334,7 @@ dependencies = [
 
 [[package]]
 name = "bouncy-js"
-version = "0.1.3"
+version = "0.1.6"
 dependencies = [
  "bouncy-dom",
  "bouncy-fetch",
@@ -350,7 +350,7 @@ dependencies = [
 
 [[package]]
 name = "bouncy-mcp"
-version = "0.1.3"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "base64",

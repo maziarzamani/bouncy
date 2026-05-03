@@ -55,6 +55,11 @@
   },
   "plugins": [
     {
+      "type": "cargo-workspace",
+      "merge": false,
+      "updateAllPackages": true
+    },
+    {
       "type": "linked-versions",
       "groupName": "bouncy",
       "components": ["bouncy", "bouncy-mcp", "bouncy-fetch", "bouncy-extract", "bouncy-js", "bouncy-dom", "bouncy-cdp"]
