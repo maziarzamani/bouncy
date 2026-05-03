@@ -24,5 +24,12 @@ jobs:
       # prebuilt static lib by the time clippy verifies link directives.
       - run: cargo build --workspace --all-targets
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      - run: cargo test --workspace --all-features
+      # Deliberately NOT passing --all-features to `cargo test`. Several
+      # crates (bouncy-cli, bouncy-browse) have an `e2e` feature that
+      # gates real-network tests against httpbin.org and example.com.
+      # Enabling it in CI causes spurious failures whenever those
+      # external services blip — we hit a 502 from httpbin in PR #29's
+      # first run. E2E suite stays opt-in: run manually with
+      # `cargo test --features e2e --test e2e` before cutting a release.
+      - run: cargo test --workspace
 
