@@ -276,6 +276,16 @@ bouncy scrape urls.txt --concurrency 50 --tui
 | `js_eval` | V8 | Fetch a URL, boot V8, run a JS expression, return the result |
 | `scrape` | auto | Single URL: auto JS-vs-static branch, optional eval / selector wait, configurable retries, plus `user_agent` and `select` / `select_attr` for static extraction |
 | `scrape_many` | auto | URL list, scraped sequentially. Accepts `user_agent`, `select`, `select_attr`, and `per_host_concurrency` (latter is advisory on the MCP today since runs are serialized) |
+| `bouncy_browse_open` | session | Open a stateful browse session at a URL. Returns `session_id` + initial page snapshot (forms / links / buttons / inputs / headings / meta / text_summary). Sessions auto-expire after 15 min idle, capped at 20 per server. |
+| `bouncy_browse_click` | session | Fire a synthetic click on the matched element; drains any `location.href` redirects. Returns the new snapshot. |
+| `bouncy_browse_fill` | session | Set a form field's value and dispatch synthetic `input` + `change` events. Returns the new snapshot. |
+| `bouncy_browse_submit` | session | Submit the form (or the form containing the matched submit button). Real HTTP POST/GET for `<form action>`; synthetic `submit` event for JS-only forms. Returns the new snapshot. |
+| `bouncy_browse_goto` | session | Navigate to a fresh URL inside the same session. Cookies persist. Returns the new snapshot. |
+| `bouncy_browse_read` | session | Read text / HTML / attribute values from every element matching `selector`. `mode` is `"text"` / `"html"` / `"attr:NAME"`. Pure read; no snapshot. |
+| `bouncy_browse_eval` | session | Escape hatch: arbitrary JS in the session's V8 context. Returns the result + new snapshot. |
+| `bouncy_browse_close` | session | Close a session and free its V8 isolate. Idempotent. |
+
+The **`bouncy_browse_*`** tools turn bouncy into a stateful browser Claude (or any MCP client) can drive autonomously: open a page, read the snapshot, click links, fill forms, submit them, extract data — all in one held-open session that persists cookies + JS state across calls. No Chromium dependency. Single 40 MB binary.
 
 **Claude Desktop** — add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or the equivalent on your platform:
 

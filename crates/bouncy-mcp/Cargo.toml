@@ -19,6 +19,8 @@ bouncy-fetch = { path = "../bouncy-fetch", version = "0.1.7" }
 bouncy-extract = { path = "../bouncy-extract", version = "0.1.7" }
 bouncy-js = { path = "../bouncy-js", version = "0.1.7" }
 bouncy-dom = { path = "../bouncy-dom", version = "0.1.7" }
+bouncy-browse = { path = "../bouncy-browse", version = "0.1.7" }
+uuid = { version = "1", features = ["v4"] }
 rmcp = { workspace = true, features = ["server", "macros", "transport-io", "schemars"] }
 tokio = { workspace = true, features = ["rt", "macros", "time", "io-util", "sync"] }
 serde = { workspace = true }
@@ -35,4 +37,7 @@ tracing-subscriber = { workspace = true }
 base64 = "0.22"
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt", "macros", "process", "time", "io-util"] }
+tokio = { workspace = true, features = ["rt", "macros", "process", "time", "io-util", "rt-multi-thread"] }
+hyper = { workspace = true, features = ["server"] }
+hyper-util = { workspace = true }
+http-body-util = { workspace = true }

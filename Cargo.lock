@@ -374,6 +374,7 @@ version = "0.1.7"
 dependencies = [
  "anyhow",
  "base64",
+ "bouncy-browse",
  "bouncy-dom",
  "bouncy-extract",
  "bouncy-fetch",
@@ -381,6 +382,9 @@ dependencies = [
  "bytes",
  "futures-util",
  "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "rmcp",
  "schemars",
  "serde",
@@ -390,6 +394,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "uuid",
 ]
 
 [[package]]

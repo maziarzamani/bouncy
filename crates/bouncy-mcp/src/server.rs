@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use bouncy_browse::{BrowseOpts, ReadMode};
 use bouncy_fetch::Fetcher;
 use bouncy_js::Runtime;
 use rmcp::handler::server::tool::ToolRouter;
@@ -9,6 +10,7 @@ use rmcp::model::{CallToolResult, Content, ServerCapabilities, ServerInfo};
 use rmcp::{tool, tool_handler, tool_router, ErrorData, ServerHandler};
 use url::Url;
 
+use crate::browse_store::{BrowseStore, StoreError, DEFAULT_REAPER_INTERVAL};
 use crate::error::ToolError;
 use crate::glue;
 use crate::tools::*;
@@ -20,6 +22,9 @@ const DEFAULT_RETRY_INITIAL_MS: u64 = 250;
 #[derive(Clone)]
 pub struct BouncyServer {
     fetcher: Arc<Fetcher>,
+    /// Server-side store of held-open browse sessions for the
+    /// `bouncy_browse_*` tools. Cheap to clone (`Arc<Mutex<…>>` inside).
+    browse_store: BrowseStore,
     // The `#[tool_handler]` macro on `impl ServerHandler` reads this
     // through generated code that escapes dead-code analysis.
     #[allow(dead_code)]
@@ -30,8 +35,13 @@ pub struct BouncyServer {
 impl BouncyServer {
     pub fn new() -> anyhow::Result<Self> {
         let fetcher = Arc::new(Fetcher::new()?);
+        let browse_store = BrowseStore::default();
+        // Spawn the idle-session reaper. The handle is intentionally
+        // dropped — the task lives until the tokio runtime shuts down.
+        let _reaper = browse_store.spawn_reaper(DEFAULT_REAPER_INTERVAL);
         Ok(Self {
             fetcher,
+            browse_store,
             tool_router: Self::tool_router(),
         })
     }
@@ -334,6 +344,193 @@ impl BouncyServer {
         }
         Self::ok(&ScrapeManyOutput { results })
     }
+
+    // =================================================================
+    //  bouncy_browse_* — stateful browser primitives wired to
+    //  `bouncy_browse::BrowseSession`. Sessions live in `browse_store`
+    //  for up to 15 min idle (auto-reaped) or until explicitly closed.
+    //  Hard cap: 20 active sessions per server (DEFAULT_MAX_SESSIONS).
+    // =================================================================
+
+    #[tool(
+        description = "Open a stateful browse session at a URL. Returns a session_id and the initial page snapshot (forms / links / buttons / inputs / headings / meta / text_summary). Pass the session_id to bouncy_browse_click / fill / submit / goto / read / eval to drive the same V8 + cookie jar across steps. Sessions auto-expire after 15 min idle; explicit close via bouncy_browse_close. Cap of 20 concurrent sessions per server."
+    )]
+    async fn bouncy_browse_open(
+        &self,
+        Parameters(input): Parameters<BrowseOpenInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let opts = BrowseOpts {
+            user_agent: input.user_agent,
+            stealth: input.stealth.unwrap_or(false),
+            ..BrowseOpts::default()
+        };
+        let (session_id, snapshot) = self
+            .browse_store
+            .open(&input.url, opts)
+            .await
+            .map_err(map_store_err)?;
+        Self::ok(&BrowseOpenOutput {
+            session_id,
+            snapshot,
+        })
+    }
+
+    #[tool(
+        description = "Fire a synthetic click on the matched element in an open browse session. Drains any location.href redirects the click triggers. Returns the new page snapshot."
+    )]
+    async fn bouncy_browse_click(
+        &self,
+        Parameters(input): Parameters<BrowseClickInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session = self
+            .browse_store
+            .touch(&input.session_id)
+            .map_err(map_store_err)?;
+        let snapshot = session
+            .click(&input.selector)
+            .await
+            .map_err(map_browse_err)?;
+        Self::ok(&BrowseSnapshotOutput { snapshot })
+    }
+
+    #[tool(
+        description = "Set the value on a form field and dispatch synthetic input + change events (so JS validators on the page see the change). Returns the new page snapshot."
+    )]
+    async fn bouncy_browse_fill(
+        &self,
+        Parameters(input): Parameters<BrowseFillInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session = self
+            .browse_store
+            .touch(&input.session_id)
+            .map_err(map_store_err)?;
+        let snapshot = session
+            .fill(&input.selector, &input.value)
+            .await
+            .map_err(map_browse_err)?;
+        Self::ok(&BrowseSnapshotOutput { snapshot })
+    }
+
+    #[tool(
+        description = "Submit the form matched by `selector` (or the form containing the matched submit button). Three branches: form has action attr → real HTTP POST/GET with urlencoded fields; no action → synthetic submit event for JS-only forms; button selector → climbs to enclosing form. Returns the new page snapshot."
+    )]
+    async fn bouncy_browse_submit(
+        &self,
+        Parameters(input): Parameters<BrowseSubmitInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session = self
+            .browse_store
+            .touch(&input.session_id)
+            .map_err(map_store_err)?;
+        let snapshot = session
+            .submit(&input.selector)
+            .await
+            .map_err(map_browse_err)?;
+        Self::ok(&BrowseSnapshotOutput { snapshot })
+    }
+
+    #[tool(
+        description = "Navigate to a fresh URL inside the same browse session. Cookies and stealth fingerprint state are preserved. Returns the new page snapshot."
+    )]
+    async fn bouncy_browse_goto(
+        &self,
+        Parameters(input): Parameters<BrowseGotoInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session = self
+            .browse_store
+            .touch(&input.session_id)
+            .map_err(map_store_err)?;
+        let snapshot = session.goto(&input.url).await.map_err(map_browse_err)?;
+        Self::ok(&BrowseSnapshotOutput { snapshot })
+    }
+
+    #[tool(
+        description = "Read text / HTML / attribute values from every element matching `selector` in an open browse session. `mode` is \"text\" (default), \"html\", or \"attr:NAME\" for attribute extraction. Pure read; doesn't change page state, doesn't return a snapshot."
+    )]
+    async fn bouncy_browse_read(
+        &self,
+        Parameters(input): Parameters<BrowseReadInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session = self
+            .browse_store
+            .touch(&input.session_id)
+            .map_err(map_store_err)?;
+        let mode = parse_read_mode(input.mode.as_deref())?;
+        let matches = session
+            .read(&input.selector, mode)
+            .await
+            .map_err(map_browse_err)?;
+        Self::ok(&BrowseReadOutput { matches })
+    }
+
+    #[tool(
+        description = "Escape hatch: evaluate arbitrary JS in the open browse session's V8 context. Drains any pending navigations after, then returns both the eval result (coerced to string) and the new snapshot. Use sparingly; the higher-level primitives are safer and clearer."
+    )]
+    async fn bouncy_browse_eval(
+        &self,
+        Parameters(input): Parameters<BrowseEvalInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session = self
+            .browse_store
+            .touch(&input.session_id)
+            .map_err(map_store_err)?;
+        let res = session.eval(&input.expr).await.map_err(map_browse_err)?;
+        Self::ok(&BrowseEvalOutput {
+            result: res.result,
+            snapshot: res.snapshot,
+        })
+    }
+
+    #[tool(
+        description = "Close an open browse session, freeing its V8 isolate and dropping cookies. Idempotent: returns closed=false if the id was unknown (already expired or never opened)."
+    )]
+    async fn bouncy_browse_close(
+        &self,
+        Parameters(input): Parameters<BrowseCloseInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let closed = self.browse_store.close(&input.session_id);
+        Self::ok(&BrowseCloseOutput { closed })
+    }
+}
+
+/// Convert a `bouncy_browse` mode string (`"text"` / `"html"` /
+/// `"attr:NAME"`) into the typed `ReadMode`. Defaults to `Text` when
+/// `None` or unrecognized so the tool never bails on a weird mode string.
+fn parse_read_mode(mode: Option<&str>) -> Result<ReadMode, ErrorData> {
+    match mode {
+        None | Some("") | Some("text") => Ok(ReadMode::Text),
+        Some("html") => Ok(ReadMode::Html),
+        Some(s) if s.starts_with("attr:") => Ok(ReadMode::Attr(s[5..].to_string())),
+        Some(other) => Err(ErrorData::invalid_params(
+            format!("unknown read mode {other:?} (expected: text / html / attr:NAME)"),
+            None,
+        )),
+    }
+}
+
+fn map_store_err(e: StoreError) -> ErrorData {
+    match e {
+        StoreError::AtCapacity { cap } => ErrorData::invalid_request(
+            format!("session capacity exceeded ({cap} active sessions); close one with bouncy_browse_close or wait for idle expiry"),
+            None,
+        ),
+        StoreError::NotFound(id) => ErrorData::invalid_request(
+            format!("session {id:?} not found (it may have expired or been closed)"),
+            None,
+        ),
+        StoreError::Browse(b) => map_browse_err(b),
+    }
+}
+
+fn map_browse_err(e: bouncy_browse::BrowseError) -> ErrorData {
+    use bouncy_browse::BrowseError;
+    match e {
+        BrowseError::NoMatch(sel) => ErrorData::invalid_request(
+            format!("selector {sel:?} matched no elements on the current page"),
+            None,
+        ),
+        other => ErrorData::internal_error(other.to_string(), None),
+    }
 }
 
 #[tool_handler]
@@ -344,10 +541,14 @@ impl ServerHandler for BouncyServer {
         let mut info = ServerInfo::default();
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info.instructions = Some(
-            "bouncy — fast headless scraping. Tools: fetch (raw HTTP), \
-             extract_title / extract_text / extract_links (static HTML), \
-             js_eval (V8), scrape (one URL, auto JS-vs-static + retries), \
-             scrape_many (URL list, sequential)."
+            "bouncy — fast headless scraping + browsing for LLMs. \
+             Stateless tools: fetch (raw HTTP), extract_title / extract_text / extract_links \
+             (static HTML), js_eval (V8), scrape (one URL, auto JS-vs-static + retries), \
+             scrape_many (URL list). Stateful browse session tools: \
+             bouncy_browse_open returns a session_id + initial page snapshot; \
+             then drive the same session with bouncy_browse_click / fill / submit / \
+             goto / read / eval (each returns the new snapshot). bouncy_browse_close \
+             frees a session early; idle sessions auto-expire after 15 min."
                 .into(),
         );
         info
