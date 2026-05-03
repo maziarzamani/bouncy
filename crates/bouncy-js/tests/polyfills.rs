@@ -119,3 +119,75 @@ async fn fresh_runtime_per_load() {
         "B"
     );
 }
+
+// ---- document.querySelector / querySelectorAll polyfill ----
+//
+// These delegate to the bridge starting from the documentElement so the
+// whole tree is searched, matching real browsers. Added because the
+// `bouncy-browse` crate's primitives `eval` selectors against `document`
+// directly, and many user pages' inline scripts do too.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn document_query_selector_finds_first_match_by_tag() {
+    let mut rt = make_rt();
+    rt.load(
+        "<html><body><h1>One</h1><h1>Two</h1></body></html>",
+        "http://test.local/",
+    )
+    .unwrap();
+    assert_eq!(
+        rt.eval("document.querySelector('h1').textContent").unwrap(),
+        "One"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn document_query_selector_finds_match_by_id() {
+    let mut rt = make_rt();
+    rt.load(
+        "<html><body><div id='target'>hello</div></body></html>",
+        "http://test.local/",
+    )
+    .unwrap();
+    assert_eq!(
+        rt.eval("document.querySelector('#target').textContent")
+            .unwrap(),
+        "hello"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn document_query_selector_returns_null_for_no_match() {
+    let mut rt = make_rt();
+    rt.load("<html><body><p>x</p></body></html>", "http://test.local/")
+        .unwrap();
+    assert_eq!(
+        rt.eval("document.querySelector('nonexistent')").unwrap(),
+        "null"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn document_query_selector_all_returns_array_with_length() {
+    let mut rt = make_rt();
+    rt.load(
+        "<html><body><a href='/x'></a><a href='/y'></a><a href='/z'></a></body></html>",
+        "http://test.local/",
+    )
+    .unwrap();
+    assert_eq!(
+        rt.eval("document.querySelectorAll('a').length").unwrap(),
+        "3"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn document_query_selector_all_returns_empty_array_for_no_match() {
+    let mut rt = make_rt();
+    rt.load("<html><body></body></html>", "http://test.local/")
+        .unwrap();
+    assert_eq!(
+        rt.eval("document.querySelectorAll('h1').length").unwrap(),
+        "0"
+    );
+}

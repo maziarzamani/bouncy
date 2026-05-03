@@ -8,6 +8,7 @@ members = [
     "crates/bouncy-dom",
     "crates/bouncy-cdp",
     "crates/bouncy-mcp",
+    "crates/bouncy-browse",
 ]
 
 [workspace.package]

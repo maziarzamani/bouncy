@@ -243,6 +243,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "bouncy-browse"
+version = "0.1.7"
+dependencies = [
+ "anyhow",
+ "bouncy-dom",
+ "bouncy-fetch",
+ "bouncy-js",
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "bouncy-cdp"
 version = "0.1.7"
 dependencies = [
