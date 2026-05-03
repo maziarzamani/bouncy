@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.5](https://github.com/maziarzamani/bouncy/compare/v0.1.4...v0.1.5) (2026-05-03)
+
+
+### Features
+
+* CSS-selector extraction + per-host throttle + UA control ([47619d3](https://github.com/maziarzamani/bouncy/commit/47619d3c1143bed5538d4b38d146e990ed9c2e4f))
+* CSS-selector extraction + per-host throttle + UA control ([d1f5116](https://github.com/maziarzamani/bouncy/commit/d1f5116ffb28d603d17f3a8ed91b7bb22ec04d9a))
+
+
+### Misc
+
+* release main ([8ad7d68](https://github.com/maziarzamani/bouncy/commit/8ad7d68aac024f36e0646985f49bb3019f56ba09))
+* release main ([95c4d1d](https://github.com/maziarzamani/bouncy/commit/95c4d1d53529533c3c72beaf297a774be8aa9a12))
+
 ## [0.1.4](https://github.com/maziarzamani/bouncy/compare/v0.1.3...v0.1.4) (2026-05-03)
 
 
