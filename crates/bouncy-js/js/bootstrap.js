@@ -391,6 +391,27 @@
       const nid = __bouncy_doc_create_text_node(String(text));
       return new Node(nid);
     }
+    // Document-rooted CSS-selector queries. Real browsers scope these
+    // to the whole document; we delegate to the bridge starting from
+    // the documentElement so descendants of <head> (rare but valid
+    // selector targets) are also matched.
+    querySelector(selector) {
+      const root = __bouncy_doc_html_root();
+      if (root < 0) return null;
+      return _wrap(__bouncy_node_query_selector(root, String(selector)));
+    }
+    querySelectorAll(selector) {
+      const root = __bouncy_doc_html_root();
+      if (root < 0) return [];
+      return _wrapList(__bouncy_node_query_selector_all(root, String(selector)));
+    }
+    getElementsByTagName(tag) {
+      // Convenience alias on top of the same selector path. Returns a
+      // plain array (real browsers return an HTMLCollection — a live
+      // collection — but for scraping the static array is what most
+      // callers want).
+      return this.querySelectorAll(String(tag));
+    }
     // Common compatibility surfaces — left as empty stubs unless a
     // fixture needs them. Filling them later won't break the recipe
     // because none are in the snapshot's hot path right now.
