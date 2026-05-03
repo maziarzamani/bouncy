@@ -14,6 +14,9 @@ path = "src/main.rs"
 [features]
 default = ["tui"]
 tui = ["dep:ratatui", "dep:crossterm", "dep:indexmap"]
+# Real-network E2E tests. Off by default so `cargo test` in CI doesn't
+# require internet access. Enable with `cargo test --features e2e`.
+e2e = []
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
@@ -27,6 +30,7 @@ bouncy-fetch = { path = "../bouncy-fetch", version = "0.1.2" }
 bouncy-extract = { path = "../bouncy-extract", version = "0.1.2" }
 bouncy-js = { path = "../bouncy-js", version = "0.1.2" }
 bouncy-cdp = { path = "../bouncy-cdp", version = "0.1.2" }
+bouncy-dom = { path = "../bouncy-dom", version = "0.1.2" }
 clap = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync"] }
 url = { workspace = true }

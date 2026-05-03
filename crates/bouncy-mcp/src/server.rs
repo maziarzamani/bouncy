@@ -55,8 +55,20 @@ impl BouncyServer {
                 .basic_auth
                 .as_ref()
                 .map(|a| (a.user.as_str(), a.pass.as_str())),
+            input.user_agent.as_deref(),
         );
         let resp = glue::fetch_with_timeout(&self.fetcher, req, timeout).await?;
+        // Run --select against the body before truncation. We want the
+        // selector to see the full document even if `max_body_bytes`
+        // would clip the returned body_text.
+        let selected = if let Some(sel) = input.select.as_deref() {
+            std::str::from_utf8(&resp.body)
+                .ok()
+                .map(|html| glue::select_from_html(html, sel, input.select_attr.as_deref()))
+                .transpose()?
+        } else {
+            None
+        };
         let (text, b64, truncated) = glue::body_to_strings(&resp, max_bytes);
         Ok(FetchOutput {
             status: resp.status,
@@ -65,12 +77,21 @@ impl BouncyServer {
             body_base64: b64,
             truncated,
             final_url: input.url,
+            selected,
         })
     }
 
     async fn do_js_eval(&self, input: JsEvalInput) -> Result<JsEvalOutput, ToolError> {
         let timeout = Duration::from_millis(input.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS));
-        let req = glue::build_request(&input.url, None, None, None, input.cookies.as_deref(), None);
+        let req = glue::build_request(
+            &input.url,
+            None,
+            None,
+            None,
+            input.cookies.as_deref(),
+            None,
+            None,
+        );
         let resp = glue::fetch_with_timeout(&self.fetcher, req, timeout).await?;
         let html_str = std::str::from_utf8(&resp.body)?.to_string();
         let fetcher = self.fetcher.clone();
@@ -122,6 +143,7 @@ impl BouncyServer {
                 None,
                 input.cookies.as_deref(),
                 None,
+                input.user_agent.as_deref(),
             );
             let resp = match glue::fetch_with_timeout(&self.fetcher, req, timeout).await {
                 Ok(r) => r,
@@ -166,12 +188,22 @@ impl BouncyServer {
             } else {
                 (None, html_str, input.url.clone())
             };
+            let selected = if let Some(sel) = input.select.as_deref() {
+                Some(glue::select_from_html(
+                    &html,
+                    sel,
+                    input.select_attr.as_deref(),
+                )?)
+            } else {
+                None
+            };
             return Ok(ScrapeOutput {
                 url: final_url,
                 status: resp.status,
                 html,
                 eval_result,
                 took_ms: started.elapsed().as_millis() as u64,
+                selected,
             });
         }
         Err(last_err.unwrap_or_else(|| {
@@ -259,6 +291,12 @@ impl BouncyServer {
         &self,
         Parameters(input): Parameters<ScrapeManyInput>,
     ) -> Result<CallToolResult, ErrorData> {
+        // Note: per_host_concurrency is accepted on the input for parity
+        // with the CLI, but the MCP server currently runs scrapes
+        // sequentially (one V8 isolate at a time), so it has no
+        // operational effect here today. Documented in the tool
+        // description so callers aren't surprised.
+        let _ = input.per_host_concurrency;
         let mut results = Vec::with_capacity(input.urls.len());
         for url in &input.urls {
             let single = ScrapeInput {
@@ -269,6 +307,9 @@ impl BouncyServer {
                 timeout_ms: input.timeout_ms,
                 max_retries: Some(0),
                 cookies: None,
+                user_agent: input.user_agent.clone(),
+                select: input.select.clone(),
+                select_attr: input.select_attr.clone(),
             };
             match self.do_scrape(single).await {
                 Ok(o) => results.push(ScrapeManyResult {
@@ -278,6 +319,7 @@ impl BouncyServer {
                     html: Some(o.html),
                     eval_result: o.eval_result,
                     error: None,
+                    selected: o.selected,
                 }),
                 Err(e) => results.push(ScrapeManyResult {
                     url: url.clone(),
@@ -286,6 +328,7 @@ impl BouncyServer {
                     html: None,
                     eval_result: None,
                     error: Some(e.to_string()),
+                    selected: None,
                 }),
             }
         }

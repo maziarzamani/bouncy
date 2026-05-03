@@ -14,6 +14,7 @@
 //!   bouncy scrape URL... [--concurrency N] [--format json|text]
 
 mod scrape;
+mod select;
 
 #[cfg(feature = "tui")]
 mod scrape_tui;
@@ -49,8 +50,23 @@ enum Cmd {
         #[arg(long, short)]
         eval: Option<String>,
         /// Wait for this CSS selector to match before dumping.
+        /// (For element extraction, use `--select` instead.)
         #[arg(long)]
         selector: Option<String>,
+        /// Extract the text content of every element matching this CSS
+        /// selector and print one result per line. Skips the `--dump`
+        /// path entirely. Use `--attr NAME` to extract an attribute
+        /// value instead of text.
+        ///
+        /// Selector grammar: tag, `#id`, `.class`, `[attr]`,
+        /// `[attr=value]` (no combinators or pseudo-classes yet).
+        #[arg(long = "select")]
+        select: Option<String>,
+        /// Pair with `--select` to extract this attribute's value
+        /// instead of text content. Elements without the attribute are
+        /// silently skipped.
+        #[arg(long = "attr", requires = "select")]
+        attr: Option<String>,
         #[arg(long, default_value = "load")]
         wait_until: String,
         #[arg(long, default_value_t = 5)]
@@ -145,6 +161,30 @@ enum Cmd {
         /// `delay * 2^attempt` (capped at 30 s).
         #[arg(long = "retry-delay-ms", default_value_t = 250)]
         retry_delay_ms: u64,
+        /// Cap on simultaneous requests against any single host. Defaults
+        /// to no per-host cap (the overall `--concurrency` is the only
+        /// ceiling). Set this when scraping many URLs from one origin
+        /// to avoid hammering the server and getting banned.
+        #[arg(long = "per-host-concurrency")]
+        per_host_concurrency: Option<usize>,
+        /// User-Agent header sent with each request. Defaults to
+        /// `bouncy/<version> (+repo URL)`. Override to identify yourself
+        /// or to mimic a specific client.
+        #[arg(long = "user-agent")]
+        user_agent: Option<String>,
+        /// Extract the text content of every element matching this CSS
+        /// selector, per URL. Output rows gain a `selected: [...]` field
+        /// (JSON) or a tab-separated extra column (text).
+        ///
+        /// Selector grammar: tag, `#id`, `.class`, `[attr]`,
+        /// `[attr=value]` (no combinators or pseudo-classes yet).
+        #[arg(long = "select")]
+        select: Option<String>,
+        /// Pair with `--select` to extract this attribute's value
+        /// instead of text content. Elements without the attribute are
+        /// silently skipped.
+        #[arg(long = "attr", requires = "select")]
+        attr: Option<String>,
         /// Live ratatui dashboard instead of the JSON / text summary.
         /// Off by default. Requires stdout to be a terminal.
         #[cfg(feature = "tui")]
@@ -176,7 +216,10 @@ async fn main() -> anyhow::Result<()> {
             dump,
             eval,
             selector,
+            select,
+            attr,
             wait,
+            user_agent,
             method,
             headers,
             body,
@@ -199,7 +242,10 @@ async fn main() -> anyhow::Result<()> {
                 dump,
                 eval.as_deref(),
                 selector.as_deref(),
+                select.as_deref(),
+                attr.as_deref(),
                 wait,
+                user_agent.as_deref(),
                 &method,
                 &headers,
                 body.as_deref(),
@@ -230,6 +276,10 @@ async fn main() -> anyhow::Result<()> {
             max_redirects,
             retry,
             retry_delay_ms,
+            per_host_concurrency,
+            user_agent,
+            select,
+            attr,
             #[cfg(feature = "tui")]
             tui,
             ..
@@ -254,6 +304,10 @@ async fn main() -> anyhow::Result<()> {
                     max_redirects,
                     retry,
                     retry_delay_ms,
+                    per_host_concurrency,
+                    user_agent.clone(),
+                    select.clone(),
+                    attr.clone(),
                     Some(tx),
                 ));
                 let tui_result = scrape_tui::run_tui(rx, total_urls).await;
@@ -273,6 +327,10 @@ async fn main() -> anyhow::Result<()> {
                 max_redirects,
                 retry,
                 retry_delay_ms,
+                per_host_concurrency,
+                user_agent,
+                select,
+                attr,
                 None,
             )
             .await
@@ -358,7 +416,10 @@ async fn fetch_one(
     dump: DumpFormat,
     eval: Option<&str>,
     selector: Option<&str>,
+    select: Option<&str>,
+    select_attr: Option<&str>,
     wait_secs: u64,
+    user_agent: Option<&str>,
     method: &str,
     headers: &[String],
     body: Option<&str>,
@@ -392,6 +453,9 @@ async fn fetch_one(
         }
         for path in ca_files {
             b = b.ca_file(path);
+        }
+        if let Some(ua) = user_agent {
+            b = b.user_agent(ua);
         }
         b.build()?
     });
@@ -479,16 +543,30 @@ async fn fetch_one(
     };
 
     let mut out = open_output(output)?;
-    match dump {
-        DumpFormat::Html => out.write_all(&html_body)?,
-        DumpFormat::Text => {
-            let t = extract_text(&html_body)?;
-            out.write_all(t.as_bytes())?;
+    if let Some(sel) = select {
+        // CSS-selector extraction short-circuits the --dump path: one
+        // result per line. `--attr NAME` switches from text to attribute
+        // value extraction.
+        let html_str = std::str::from_utf8(&html_body)?;
+        let lines = match select_attr {
+            Some(attr_name) => select::select_attr(html_str, sel, attr_name)?,
+            None => select::select_text(html_str, sel)?,
+        };
+        for line in lines {
+            writeln!(out, "{}", line)?;
         }
-        DumpFormat::Links => {
-            let base = Url::parse(url)?;
-            for l in extract_links(&html_body, &base)? {
-                writeln!(out, "{}\t{}", l.url, l.text)?;
+    } else {
+        match dump {
+            DumpFormat::Html => out.write_all(&html_body)?,
+            DumpFormat::Text => {
+                let t = extract_text(&html_body)?;
+                out.write_all(t.as_bytes())?;
+            }
+            DumpFormat::Links => {
+                let base = Url::parse(url)?;
+                for l in extract_links(&html_body, &base)? {
+                    writeln!(out, "{}\t{}", l.url, l.text)?;
+                }
             }
         }
     }
