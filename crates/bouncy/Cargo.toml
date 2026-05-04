@@ -1,0 +1,46 @@
+[package]
+name = "bouncy"
+version = "0.1.8"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Tiny Rust headless browser. Scrape pages or drive multi-step browse sessions (click / fill / submit / read) — from a CLI, a library, or autonomously from Claude (MCP). This is the umbrella facade re-exporting the bouncy-* workspace crates."
+keywords = ["browser", "scraper", "headless", "mcp", "automation"]
+categories = ["web-programming", "command-line-utilities"]
+readme = "README.md"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+# Default keeps the dep tree small: just fetch + extract (the static
+# scraping path). Pull in `browse` for the stateful V8-backed surface.
+default = ["fetch", "extract"]
+
+# Static scraping primitives — pure Rust, no V8.
+fetch = ["dep:bouncy-fetch"]
+extract = ["dep:bouncy-extract"]
+
+# Stateful browser primitives. Pulls in V8 via bouncy-js.
+browse = ["dep:bouncy-browse", "dep:bouncy-js", "dep:bouncy-dom"]
+
+# Lower-level building blocks, exposed for embedders that want to bypass
+# the high-level surface.
+dom = ["dep:bouncy-dom"]
+js = ["dep:bouncy-js"]
+
+# Everything.
+full = ["fetch", "extract", "browse", "dom", "js"]
+
+[dependencies]
+bouncy-fetch = { path = "../bouncy-fetch", version = "0.1.8", optional = true }
+bouncy-extract = { path = "../bouncy-extract", version = "0.1.8", optional = true }
+bouncy-browse = { path = "../bouncy-browse", version = "0.1.8", optional = true }
+bouncy-dom = { path = "../bouncy-dom", version = "0.1.8", optional = true }
+bouncy-js = { path = "../bouncy-js", version = "0.1.8", optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+url = { workspace = true }

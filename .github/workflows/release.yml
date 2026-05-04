@@ -144,6 +144,6 @@ jobs:
             return $rc
           }
 
-          for crate in bouncy-fetch bouncy-extract bouncy-dom bouncy-js bouncy-cdp bouncy-browse bouncy-mcp bouncy-cli; do
+          for crate in bouncy-fetch bouncy-extract bouncy-dom bouncy-js bouncy-cdp bouncy-browse bouncy bouncy-mcp bouncy-cli; do
             publish_if_new "${crate}" || { echo "::error::publish failed for ${crate}"; exit 1; }
           done

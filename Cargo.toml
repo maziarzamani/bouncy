@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/bouncy",
     "crates/bouncy-fetch",
     "crates/bouncy-extract",
     "crates/bouncy-cli",
