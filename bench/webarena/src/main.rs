@@ -71,10 +71,17 @@ enum Provider {
 async fn main() -> Result<()> {
     bouncy_bench_webarena::install_crypto_provider();
     let args = Args::parse();
+    eprintln!(
+        "bouncy-bench-webarena — provider={:?}, model={}",
+        args.provider, args.model
+    );
     let raw = std::fs::read_to_string(&args.tasks)
         .with_context(|| format!("read tasks file {:?}", args.tasks))?;
     let tasks = parse_tasks(&raw)?;
+    eprintln!("loaded {} task(s)", tasks.len());
+    eprintln!("building LLM client …");
     let llm: Arc<dyn LlmClient> = build_client(&args).await?;
+    eprintln!("LLM client ready");
     let judge = SubstringJudge;
 
     let mut summary = Vec::with_capacity(tasks.len());

@@ -67,7 +67,12 @@ pub async fn run_task(
     opts: BrowseOpts,
 ) -> Result<Trajectory> {
     let started = Instant::now();
+    eprintln!("  opening session at {} …", task.start_url);
     let (session, snap) = BrowseSession::open(&task.start_url, opts).await?;
+    eprintln!(
+        "  page loaded — {} interactive elements, asking LLM…",
+        snap.interactive.len()
+    );
     let tools = tool_schemas();
 
     let mut messages: Vec<Message> = Vec::new();
@@ -82,8 +87,25 @@ pub async fn run_task(
     let mut answer: Option<String> = None;
     let mut stop_reason = StopReason::MaxSteps;
 
-    for _step in 0..task.max_steps {
+    for step_idx in 0..task.max_steps {
+        eprintln!("  step {}/{} → LLM call …", step_idx + 1, task.max_steps);
         let turn: AssistantTurn = llm.next_turn(SYSTEM_PROMPT, &messages, &tools).await?;
+        eprintln!(
+            "    ← {} tool call(s){}",
+            turn.calls.len(),
+            if turn.text.is_empty() {
+                String::new()
+            } else {
+                let preview = if turn.text.chars().count() > 80 {
+                    let mut p: String = turn.text.chars().take(80).collect();
+                    p.push('…');
+                    p
+                } else {
+                    turn.text.clone()
+                };
+                format!(" — \"{preview}\"")
+            }
+        );
         // Append the assistant's full turn (text + tool_use blocks)
         // to the conversation so the next user turn can attach
         // tool_results to the right ids.
