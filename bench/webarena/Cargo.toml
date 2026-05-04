@@ -1,0 +1,54 @@
+[package]
+name = "bouncy-bench-webarena"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "WebArena-shaped agent-loop harness for bouncy. Drives Claude through bouncy_browse_* primitives against a task suite and reports success rate + wall-clock. Not published; lives in the repo as a leaderboard-submission scaffold."
+
+[[bin]]
+name = "bouncy-bench-webarena"
+path = "src/main.rs"
+
+[dependencies]
+bouncy-browse = { path = "../../crates/bouncy-browse" }
+tokio = { workspace = true, features = ["net"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+async-trait = "0.1"
+# Minimal HTTP client for the Anthropic API + the in-process
+# fixture server. The workspace `hyper` dep is client-only; this
+# crate also needs `server` for the fixture, so we enable it here
+# rather than amending the workspace.
+hyper = { version = "1", default-features = false, features = ["client", "server", "http1", "http2"] }
+hyper-util = { workspace = true, features = ["server", "server-auto"] }
+hyper-rustls = { workspace = true }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
+thiserror = { workspace = true }
+
+# AWS Bedrock support — optional via the `bedrock` feature so people
+# benchmarking against the direct Anthropic API don't pay the AWS
+# SDK's compile-time cost. Enable with `--features bedrock` (or
+# `--all-features`). Standard credential chain: env vars, ~/.aws,
+# IAM role, etc.
+aws-config = { version = "1", optional = true, default-features = false, features = ["behavior-version-latest", "rt-tokio", "rustls"] }
+aws-sdk-bedrockruntime = { version = "1", optional = true, default-features = false, features = ["behavior-version-latest", "rt-tokio", "rustls"] }
+aws-smithy-types = { version = "1", optional = true }
+# When the bedrock feature is on, the AWS SDK pulls in rustls with
+# aws-lc-rs — alongside hyper-rustls's ring provider that bouncy
+# already uses for plain HTTPS. Two providers in the graph means
+# rustls 0.23 won't auto-install a default and panics on first
+# use; we install ring explicitly via `install_crypto_provider`.
+rustls = { version = "0.23", optional = true, default-features = false, features = ["ring"] }
+
+[features]
+default = []
+bedrock = ["dep:aws-config", "dep:aws-sdk-bedrockruntime", "dep:aws-smithy-types", "dep:rustls"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
