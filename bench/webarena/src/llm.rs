@@ -392,21 +392,48 @@ mod bedrock {
         model_id: String,
     }
 
+    /// Format an SDK error with its full source chain.
+    ///
+    /// `aws-sdk` errors usually wrap a more useful inner error
+    /// (`SdkError::DispatchFailure(ConnectorError(io error: …))`),
+    /// but `Display` only prints the top — so you get cryptic
+    /// "dispatch failure" messages with no signal about *what*
+    /// failed. Walking `source()` and concatenating gets you the
+    /// full chain in one line: TLS handshake errors, DNS lookup
+    /// failures, IO timeouts, all readable.
+    fn describe_sdk_error<E: std::error::Error + 'static>(e: &E) -> String {
+        let mut out = e.to_string();
+        let mut cur: Option<&dyn std::error::Error> = e.source();
+        while let Some(s) = cur {
+            out.push_str(" → ");
+            out.push_str(&s.to_string());
+            cur = s.source();
+        }
+        out
+    }
+
     impl BedrockClient {
         /// Build from the default AWS config. Honours `AWS_REGION`
         /// / `AWS_DEFAULT_REGION` env vars; pass `region` to
         /// override.
         pub async fn from_env(model_id: impl Into<String>, region: Option<String>) -> Result<Self> {
+            let model_id = model_id.into();
+            let region_label = region.clone().unwrap_or_else(|| "<env-default>".into());
+            // The credential chain can do real I/O (env, ~/.aws,
+            // IMDS, SSO, etc.) — print so a stalled lookup is
+            // diagnosable instead of silent.
+            eprintln!("  bedrock: loading AWS config (region={region_label}) …");
             let mut loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
             if let Some(r) = region {
                 loader = loader.region(aws_config::Region::new(r));
             }
             let cfg = loader.load().await;
+            eprintln!(
+                "  bedrock: config loaded (region={}, model={model_id})",
+                cfg.region().map(|r| r.as_ref()).unwrap_or("<unknown>")
+            );
             let api = BedrockApiClient::new(&cfg);
-            Ok(Self {
-                api,
-                model_id: model_id.into(),
-            })
+            Ok(Self { api, model_id })
         }
     }
 
@@ -441,7 +468,7 @@ mod bedrock {
                 .tool_config(tool_cfg)
                 .send()
                 .await
-                .map_err(|e| anyhow!("bedrock converse: {e}"))?;
+                .map_err(|e| anyhow!("bedrock converse: {}", describe_sdk_error(&e)))?;
 
             let output = resp
                 .output()

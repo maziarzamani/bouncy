@@ -3,14 +3,21 @@
     "id": "example_title",
     "start_url": "https://example.com/",
     "instruction": "What is the page title? Return only the title text.",
-    "expected": ["example"],
+    "expected": ["example domain"],
     "max_steps": 4
   },
   {
-    "id": "example_body_phrase",
+    "id": "example_literature",
     "start_url": "https://example.com/",
-    "instruction": "What phrase does the page use to describe what this domain is for? Find the most descriptive single word.",
-    "expected": ["illustrative"],
+    "instruction": "Does this page say you can use the domain in literature without prior coordination? Answer 'yes' or 'no'.",
+    "expected": ["yes"],
+    "max_steps": 4
+  },
+  {
+    "id": "example_link_text",
+    "start_url": "https://example.com/",
+    "instruction": "What is the visible text of the only link on the page? Return just the text, exactly as it appears.",
+    "expected": ["more information"],
     "max_steps": 4
   }
 ]
