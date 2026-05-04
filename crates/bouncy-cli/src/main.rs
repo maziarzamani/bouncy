@@ -13,6 +13,7 @@
 //!   bouncy fetch URL -X POST --body '...' -H 'Authorization: ...'
 //!   bouncy scrape URL... [--concurrency N] [--format json|text]
 
+mod browse;
 mod scrape;
 mod select;
 
@@ -198,6 +199,37 @@ enum Cmd {
         #[arg(long, default_value = "127.0.0.1")]
         host: String,
     },
+    /// Open a stateful browse session — the same V8 + cookie jar
+    /// persists across `click` / `fill` / `submit` / `goto` / `read`
+    /// / `eval` steps. Two modes:
+    ///   - **Scripted chain**: `bouncy browse <url> --do "click sel"
+    ///     --do "fill sel value" --do "submit form"` — non-interactive,
+    ///     scriptable, exits when the chain finishes.
+    ///   - **REPL**: `bouncy browse <url>` (no `--do`) — drops into an
+    ///     interactive prompt; one command per line; `exit` quits.
+    Browse {
+        /// Initial URL to open.
+        url: String,
+        /// Run a series of commands non-interactively. Repeatable.
+        /// Each value is a single command string (e.g. `"click .btn"`,
+        /// `"fill input[name=q] rust"`, `"submit form#search"`).
+        ///
+        /// Without `--do`, the session drops into an interactive REPL.
+        #[arg(long = "do")]
+        do_steps: Vec<String>,
+        /// Emit the final snapshot (or each step's snapshot) as JSON
+        /// instead of the human-friendly text format. Useful for piping
+        /// into `jq` or downstream tools.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+        /// Override the outgoing User-Agent for this session.
+        #[arg(long = "user-agent")]
+        user_agent: Option<String>,
+        /// Enable bouncy's stealth patches (canvas/audio/WebGPU/battery
+        /// fingerprint randomization, hidden navigator.webdriver).
+        #[arg(long, default_value_t = false)]
+        stealth: bool,
+    },
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -336,6 +368,22 @@ async fn main() -> anyhow::Result<()> {
             .await
         }
         Cmd::Serve { port, host } => serve(&host, port).await,
+        Cmd::Browse {
+            url,
+            do_steps,
+            json,
+            user_agent,
+            stealth,
+        } => {
+            browse::run(browse::Args {
+                url,
+                do_steps,
+                json,
+                user_agent,
+                stealth,
+            })
+            .await
+        }
     }
 }
 
