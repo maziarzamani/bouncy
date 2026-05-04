@@ -1,6 +1,6 @@
 [package]
 name = "bouncy-cli"
-version = "0.1.7"
+version = "0.1.8"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -26,12 +26,12 @@ http-body-util = { workspace = true }
 bytes = { workspace = true }
 
 [dependencies]
-bouncy-fetch = { path = "../bouncy-fetch", version = "0.1.7" }
-bouncy-extract = { path = "../bouncy-extract", version = "0.1.7" }
-bouncy-js = { path = "../bouncy-js", version = "0.1.7" }
-bouncy-cdp = { path = "../bouncy-cdp", version = "0.1.7" }
-bouncy-dom = { path = "../bouncy-dom", version = "0.1.7" }
-bouncy-browse = { path = "../bouncy-browse", version = "0.1.7" }
+bouncy-fetch = { path = "../bouncy-fetch", version = "0.1.8" }
+bouncy-extract = { path = "../bouncy-extract", version = "0.1.8" }
+bouncy-js = { path = "../bouncy-js", version = "0.1.8" }
+bouncy-cdp = { path = "../bouncy-cdp", version = "0.1.8" }
+bouncy-dom = { path = "../bouncy-dom", version = "0.1.8" }
+bouncy-browse = { path = "../bouncy-browse", version = "0.1.8" }
 clap = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync"] }
 url = { workspace = true }

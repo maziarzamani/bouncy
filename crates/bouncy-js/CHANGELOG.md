@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.8](https://github.com/maziarzamani/bouncy/compare/v0.1.7...v0.1.8) (2026-05-04)
+
+
+### Features
+
+* **browse:** bouncy-browse crate foundations — stateful sessions + page snapshots ([7f8e05e](https://github.com/maziarzamani/bouncy/commit/7f8e05ef1f03b341051d233398366e4962599b54))
+* **browse:** bouncy-browse crate foundations — stateful sessions + page snapshots ([4ed1ed6](https://github.com/maziarzamani/bouncy/commit/4ed1ed6655a53685fd253f98617d1bc6ba8e71a9))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * bouncy-dom bumped from 0.1.7 to 0.1.8
+    * bouncy-fetch bumped from 0.1.7 to 0.1.8
+
 ## [0.1.7](https://github.com/maziarzamani/bouncy/compare/v0.1.6...v0.1.7) (2026-05-03)
 
 

@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.1.8](https://github.com/maziarzamani/bouncy/compare/v0.1.7...v0.1.8) (2026-05-04)
+
+
+### Features
+
+* **cli:** bouncy browse — stateful multi-step browse from a shell ([fd2f11d](https://github.com/maziarzamani/bouncy/commit/fd2f11df2e899860d46a3b896f6fe841da18d975))
+* **cli:** bouncy browse — stateful multi-step browse from a shell ([4c163ee](https://github.com/maziarzamani/bouncy/commit/4c163eeb12c42d0d22e65c855078301cce6b1fe4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * bouncy-fetch bumped from 0.1.7 to 0.1.8
+    * bouncy-extract bumped from 0.1.7 to 0.1.8
+    * bouncy-js bumped from 0.1.7 to 0.1.8
+    * bouncy-cdp bumped from 0.1.7 to 0.1.8
+    * bouncy-dom bumped from 0.1.7 to 0.1.8
+    * bouncy-browse bumped from 0.1.7 to 0.1.8
+
 ## [0.1.7](https://github.com/maziarzamani/bouncy/compare/v0.1.6...v0.1.7) (2026-05-03)
 
 
