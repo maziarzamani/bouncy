@@ -22,6 +22,9 @@ use bouncy_bench_webarena::agent::{run_task, Trajectory};
 use bouncy_bench_webarena::judge::{Judge, SubstringJudge};
 use bouncy_bench_webarena::llm::{AnthropicClient, LlmClient};
 use bouncy_bench_webarena::task::Task;
+use bouncy_bench_webarena::webarena::{
+    self, url_map_from_env, UrlMap, WebArenaConfig, WebArenaJudge,
+};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -29,10 +32,22 @@ use bouncy_bench_webarena::task::Task;
     about = "Agent-loop harness driving bouncy + Claude through WebArena-shaped tasks."
 )]
 struct Args {
-    /// Path to a JSON file containing one task object or an array
-    /// of tasks.
-    #[arg(long)]
-    tasks: PathBuf,
+    /// Path to a JSON file containing one task object or an array of
+    /// tasks in the harness's simple format. Mutually exclusive with
+    /// `--webarena-tasks`.
+    #[arg(long, conflicts_with = "webarena_tasks")]
+    tasks: Option<PathBuf>,
+
+    /// Path to a directory of WebArena task JSON files (the kind
+    /// shipped under `config_files/<id>.json` in
+    /// <https://github.com/web-arena-x/webarena>), or a single
+    /// `.json` file containing one task. Tasks are scored with the
+    /// `WebArenaJudge` (string_match: exact / must_include /
+    /// fuzzy_match), and `__SHOPPING__` / `__REDDIT__` etc. URL
+    /// placeholders are resolved from env vars (`SHOPPING`,
+    /// `REDDIT`, …), matching WebArena's own convention.
+    #[arg(long, conflicts_with = "tasks")]
+    webarena_tasks: Option<PathBuf>,
 
     /// LLM backend. `anthropic` is the direct Messages API
     /// (`ANTHROPIC_API_KEY`). `bedrock` is AWS Bedrock's Converse
@@ -67,6 +82,14 @@ enum Provider {
     Bedrock,
 }
 
+/// One task ready to run plus the judge that scores its trajectory.
+/// Lets us mix simple-format tasks (substring judge) and WebArena
+/// tasks (rubric judge) in the same loop.
+struct Job {
+    task: Task,
+    judge: Box<dyn Judge>,
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     bouncy_bench_webarena::install_crypto_provider();
@@ -75,31 +98,29 @@ async fn main() -> Result<()> {
         "bouncy-bench-webarena — provider={:?}, model={}",
         args.provider, args.model
     );
-    let raw = std::fs::read_to_string(&args.tasks)
-        .with_context(|| format!("read tasks file {:?}", args.tasks))?;
-    let tasks = parse_tasks(&raw)?;
-    eprintln!("loaded {} task(s)", tasks.len());
+
+    let jobs = load_jobs(&args)?;
+    eprintln!("loaded {} task(s)", jobs.len());
     eprintln!("building LLM client …");
     let llm: Arc<dyn LlmClient> = build_client(&args).await?;
     eprintln!("LLM client ready");
-    let judge = SubstringJudge;
 
-    let mut summary = Vec::with_capacity(tasks.len());
-    for task in &tasks {
-        eprintln!("→ task {}: {}", task.id, task.instruction);
+    let mut summary = Vec::with_capacity(jobs.len());
+    for job in &jobs {
+        eprintln!("→ task {}: {}", job.task.id, job.task.instruction);
         let opts = BrowseOpts {
             stealth: args.stealth,
             ..BrowseOpts::default()
         };
-        let traj = match run_task(task, llm.clone(), opts).await {
+        let traj = match run_task(&job.task, llm.clone(), opts).await {
             Ok(t) => t,
             Err(e) => {
                 eprintln!("  ✗ harness error: {e}");
-                summary.push((task.id.clone(), false, 0u64, format!("error: {e}")));
+                summary.push((job.task.id.clone(), false, 0u64, format!("error: {e}")));
                 continue;
             }
         };
-        let verdict = judge.score(task, &traj);
+        let verdict = job.judge.score(&job.task, &traj);
         let elapsed_ms = traj.elapsed.as_millis() as u64;
         eprintln!(
             "  {} ({elapsed_ms} ms, {} steps) — {}",
@@ -111,9 +132,106 @@ async fn main() -> Result<()> {
                 verdict.reason.clone()
             }
         );
-        summary.push((task.id.clone(), verdict.success, elapsed_ms, verdict.reason));
+        summary.push((
+            job.task.id.clone(),
+            verdict.success,
+            elapsed_ms,
+            verdict.reason,
+        ));
     }
-    print_summary(&summary, &tasks);
+    print_summary(&summary, jobs.len());
+    Ok(())
+}
+
+/// Resolve the `--tasks` / `--webarena-tasks` flags into a uniform
+/// list of [`Job`]s. Errors loudly when neither flag is given so
+/// the user gets a clear "what do I run?" message instead of an
+/// empty success.
+fn load_jobs(args: &Args) -> Result<Vec<Job>> {
+    if let Some(path) = &args.webarena_tasks {
+        let url_map = url_map_from_env();
+        if url_map.is_empty() {
+            eprintln!(
+                "  warn: no WebArena URL placeholders in env (SHOPPING / REDDIT / GITLAB / MAP / SHOPPING_ADMIN / WIKIPEDIA / HOMEPAGE); tasks with __PLACEHOLDER__ start_urls will fail to load"
+            );
+        } else {
+            let keys: Vec<&String> = url_map.keys().collect();
+            eprintln!("  WebArena URL map: {keys:?}");
+        }
+        return load_webarena_jobs(path, &url_map);
+    }
+    if let Some(path) = &args.tasks {
+        return load_simple_jobs(path);
+    }
+    Err(anyhow::anyhow!(
+        "specify --tasks <FILE> (simple format) or --webarena-tasks <FILE-OR-DIR> (WebArena format)"
+    ))
+}
+
+fn load_simple_jobs(path: &PathBuf) -> Result<Vec<Job>> {
+    let raw = std::fs::read_to_string(path).with_context(|| format!("read tasks file {path:?}"))?;
+    let tasks = parse_tasks(&raw)?;
+    Ok(tasks
+        .into_iter()
+        .map(|task| Job {
+            task,
+            judge: Box::new(SubstringJudge),
+        })
+        .collect())
+}
+
+fn load_webarena_jobs(path: &PathBuf, url_map: &UrlMap) -> Result<Vec<Job>> {
+    const DEFAULT_MAX_STEPS: u32 = 30;
+    let configs = read_webarena_configs(path)?;
+    let mut jobs = Vec::with_capacity(configs.len());
+    for cfg in configs {
+        let task = webarena::to_task(&cfg, url_map, DEFAULT_MAX_STEPS)
+            .map_err(|e| anyhow::anyhow!("task {}: {e}", cfg.task_id))?;
+        let judge = WebArenaJudge { eval: cfg.eval };
+        jobs.push(Job {
+            task,
+            judge: Box::new(judge),
+        });
+    }
+    Ok(jobs)
+}
+
+/// Read one or many WebArena task JSON files. `path` is either:
+///   - a single `.json` file → one task
+///   - a directory → every `*.json` inside, sorted by file name
+fn read_webarena_configs(path: &PathBuf) -> Result<Vec<WebArenaConfig>> {
+    let meta = std::fs::metadata(path).with_context(|| format!("stat {path:?}"))?;
+    if meta.is_dir() {
+        let mut entries: Vec<PathBuf> = std::fs::read_dir(path)
+            .with_context(|| format!("read_dir {path:?}"))?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
+            .collect();
+        entries.sort();
+        let mut out = Vec::with_capacity(entries.len());
+        for p in entries {
+            let raw = std::fs::read_to_string(&p).with_context(|| format!("read {p:?}"))?;
+            // Each file may be a single task or an array (WebArena's
+            // own `test.raw.json` is an array).
+            push_webarena_from_str(&raw, &mut out).with_context(|| format!("parse {p:?}"))?;
+        }
+        Ok(out)
+    } else {
+        let raw = std::fs::read_to_string(path).with_context(|| format!("read {path:?}"))?;
+        let mut out = Vec::new();
+        push_webarena_from_str(&raw, &mut out).with_context(|| format!("parse {path:?}"))?;
+        Ok(out)
+    }
+}
+
+fn push_webarena_from_str(raw: &str, out: &mut Vec<WebArenaConfig>) -> Result<()> {
+    if raw.trim_start().starts_with('[') {
+        let arr: Vec<WebArenaConfig> = serde_json::from_str(raw)?;
+        out.extend(arr);
+    } else {
+        out.push(serde_json::from_str(raw)?);
+    }
     Ok(())
 }
 
@@ -150,8 +268,7 @@ async fn bedrock_client(_args: &Args) -> Result<Arc<dyn LlmClient>> {
     ))
 }
 
-fn print_summary(summary: &[(String, bool, u64, String)], tasks: &[Task]) {
-    let total = tasks.len();
+fn print_summary(summary: &[(String, bool, u64, String)], total: usize) {
     let passed = summary.iter().filter(|(_, ok, _, _)| *ok).count();
     let pct = if total == 0 {
         0.0

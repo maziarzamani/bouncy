@@ -82,14 +82,55 @@ bench/webarena/src/
 
 `tests/agent_smoke.rs` drives the loop end-to-end with `ScriptedClient` against the fixture — hermetic, no API credentials.
 
-## What's stubbed for the leaderboard submission
+## Running real WebArena tasks
 
-This crate proves the architecture with a substring judge and an in-process fixture. To submit to [leaderboard.steel.dev/leaderboards/webarena](https://leaderboard.steel.dev/leaderboards/webarena):
+WebArena ships its task suite as JSON files under [`config_files/`](https://github.com/web-arena-x/webarena/tree/main/config_files) — one document per task with a starting URL templated against placeholder hosts (`__SHOPPING__`, `__REDDIT__`, etc.) plus an eval rubric. The harness loads that format directly via `--webarena-tasks` and scores trajectories with `WebArenaJudge` instead of the substring judge.
 
-1. **Stand up WebArena fixtures locally** — WebArena ships a docker compose with Reddit / GitLab / e-commerce / OSM / CMS clones. See [github.com/web-arena-x/webarena](https://github.com/web-arena-x/webarena).
-2. **Port WebArena's task format** — extend `task.rs` with the verification rubric WebArena tasks use (URL match, page-state checks, exact-string-match flags). The shape is roughly compatible; bring fields in as needed.
-3. **Plug in WebArena's official judge** — implement `Judge` against the rubric. Keep `SubstringJudge` as a fallback.
-4. **Run the suite** — 100-task subset is fine for a first submission; full 812 is the eventual target. Save trajectories as JSON for the source link in the leaderboard PR.
-5. **Submit** — open a PR to [steel-dev/leaderboard](https://github.com/steel-dev/leaderboard) with a row in `src/data/` matching the schema and a public link to your trajectories + reproduction script.
+### Setup
 
-The story to tell on the submission row: **same accuracy as browser-use + Claude on the WebArena DOM-feasible subset, ~50× lower wall-clock per task** (no Chromium boot, ~30 ms cold start, ~20 MB resident).
+```bash
+# 1. Stand up WebArena's docker compose locally — Reddit / GitLab /
+#    e-commerce / OSM / CMS clones. Follow the upstream repo:
+#    https://github.com/web-arena-x/webarena
+docker compose up -d   # in the webarena/ checkout
+
+# 2. Export the same env vars WebArena's own scripts use, pointing
+#    at the bound localhost ports. Skip ones you don't need —
+#    tasks that use missing placeholders error at load time.
+export SHOPPING="http://localhost:7770"
+export SHOPPING_ADMIN="http://localhost:7780/admin"
+export REDDIT="http://localhost:9999"
+export GITLAB="http://localhost:8023"
+export MAP="http://localhost:3000"
+export WIKIPEDIA="http://localhost:8888"
+export HOMEPAGE="http://localhost:4399"
+
+# 3. Point the harness at WebArena's task config(s). Path can be a
+#    single .json file or a directory of them.
+ANTHROPIC_API_KEY=sk-ant-… cargo run -p bouncy-bench-webarena -- \
+    --webarena-tasks /path/to/webarena/config_files \
+    --model claude-sonnet-4-6
+```
+
+The `--webarena-tasks` and `--tasks` flags are mutually exclusive — pick the format you're feeding in. Run output looks the same as the simple format; the judge per-task is whichever the task's source format implies.
+
+### Eval coverage
+
+WebArena's verifier supports three eval types. The `WebArenaJudge` covers them as follows:
+
+| eval type      | coverage                                                                 |
+|----------------|--------------------------------------------------------------------------|
+| `string_match` | `exact_match` (case-insensitive trim), `must_include`, `fuzzy_match` (substring approximation; upstream uses an LLM judge — gap documented) |
+| `url_match`    | not yet — needs `Trajectory.final_url` plumbed through. Errors loudly with a typed message rather than silently passing. |
+| `program_html` | not yet — needs a post-task DOM fetch + lxml-style locator port. Same loud-error treatment. |
+
+Tasks whose eval type isn't covered fail with a clear "not yet supported" message, so you'll see exactly which tasks would need each gap closed.
+
+## To get a row on leaderboard.steel.dev
+
+1. **Fixture parity** — your WebArena docker stack needs the same fixture versions WebArena's leaderboard pins. See upstream's `Dockerfile` tags.
+2. **Eval gap closure** — `url_match` and `program_html` cover a real share of the 812-task suite. If your task selection avoids them you can submit a (clearly labelled) DOM-only subset; otherwise close the gaps first.
+3. **Run the suite** — full 812 tasks is the eventual target; a 100-task labelled subset is acceptable for a first row.
+4. **Submit** — open a PR to [steel-dev/leaderboard](https://github.com/steel-dev/leaderboard) with a row in `src/data/` and a public link to your trajectories + reproduction script.
+
+The story to tell on the submission row: **same accuracy as browser-use + Claude on the DOM-feasible subset, ~50× lower wall-clock per task** (no Chromium boot, ~30 ms cold start, ~20 MB resident).

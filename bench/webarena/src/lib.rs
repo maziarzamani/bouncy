@@ -32,6 +32,7 @@ pub mod judge;
 pub mod llm;
 pub mod task;
 pub mod tools;
+pub mod webarena;
 
 /// Install rustls's `ring` crypto provider as the process-wide
 /// default. Idempotent — safe to call from `main`, from each test,
