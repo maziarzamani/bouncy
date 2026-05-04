@@ -1,0 +1,16 @@
+[
+  {
+    "id": "example_title",
+    "start_url": "https://example.com/",
+    "instruction": "What is the page title? Return only the title text.",
+    "expected": ["example"],
+    "max_steps": 4
+  },
+  {
+    "id": "example_body_phrase",
+    "start_url": "https://example.com/",
+    "instruction": "What phrase does the page use to describe what this domain is for? Find the most descriptive single word.",
+    "expected": ["illustrative"],
+    "max_steps": 4
+  }
+]
