@@ -35,8 +35,12 @@ sleep 1
 echo
 
 # 1. Scrape
+# Use `--dump text` (works on every version) so an old `bouncy` in PATH
+# doesn't error. If you've upgraded (`cargo install --path crates/bouncy-cli
+# --force`), you can swap in `--select h1 --dump text` for a single-line
+# h1 extraction.
 note "scrape — static page, no V8 boot"
-cmd 'time bouncy fetch https://example.com --select h1 --dump text'
+cmd 'time bouncy fetch https://example.com --dump text'
 sleep 1
 
 # 2. Browse — click by visible text
