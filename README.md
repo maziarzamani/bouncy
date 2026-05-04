@@ -40,6 +40,7 @@ Plus drop-in modes: use it from the shell like curl, or run `bouncy serve` as a 
 - **Configurable User-Agent** — `--user-agent` on `fetch` / `scrape`, with a sensible default of `bouncy/<version> (+repo URL)` so site operators can identify and reach you.
 - **Live TUI dashboard** — `bouncy scrape <urls> --tui` swaps the JSON summary for a live ratatui UI: per-URL status grid, throughput, p50/p95 latency, status histogram. Off by default; opt-in flag.
 - **Stateful browse sessions** — `bouncy browse <url>` opens a held-open session (V8 + cookies + DOM persist) and runs `click` / `fill` / `submit` / `goto` / `read` / `eval` steps as a `--do` chain or an interactive REPL. The same primitives are exposed as `bouncy_browse_*` MCP tools so Claude can drive flows end-to-end. `submit` handles real HTTP form submission (POST + GET) and JS-only forms transparently. The library API lives in `bouncy::browse` (or `bouncy-browse` directly).
+- **Indexed interactive elements + browser-use-style primitives** — every snapshot exposes a flat `interactive` list where each form field, link, and button has a stable integer `index`. `click` / `fill` / `submit` / `read` accept either a CSS selector or `@N` (CLI) / `index: N` (MCP), so an LLM doesn't have to hand-build selectors. On top of that: `click_text` (find by visible text), `select_option` + `<option>` enumeration in snapshots, `press_key` (keyboard events), `wait_for` / `wait_for_text` / `wait`, `back` / `forward`, and `chain` (batch N actions in one round trip — like browser-use's `max_actions_per_step`). MCP `bouncy_browse_open` accepts a `secrets` map for placeholder→real-value substitution so the LLM never sees sensitive fill values.
 - **Cross-platform binaries** — Linux x86_64, macOS Apple Silicon, Windows x86_64.
 
 ## See it
@@ -75,6 +76,9 @@ If you need a real browser (screenshots, true layout-dependent behaviour, full W
 | Cold start | ~30 ms | ~1.5 s (Playwright launch) |
 | RAM per page | ~20 MB | 200+ MB |
 | MCP-native | yes — `bouncy_browse_*` tools ship in `bouncy-mcp` | wrapper required |
+| Indexed interactive elements | yes (`@index` / `index: N`) | yes |
+| Click-by-text / select / keyboard / wait_for / history / chain | yes | yes |
+| Sensitive-data masking (placeholder → real value) | yes (`secrets` on open) | yes (`sensitive_data`) |
 | Real layout / paint / WebGL | no | yes |
 | Visual screenshots | no | yes |
 | Anti-bot fingerprints | built-in stealth (canvas / audio / WebGPU / WebGL / fonts) | with plugins |

@@ -82,6 +82,102 @@ pub enum ReadMode {
     Attr(String),
 }
 
+/// How a primitive addresses an element on the current page. Either a
+/// CSS selector (the original surface) or an `index` from the current
+/// snapshot's `interactive` list (the LLM-friendly surface inspired by
+/// browser-use's clickable-element indexing).
+///
+/// Indices are stable inside a single snapshot only — every
+/// state-changing primitive returns a fresh snapshot, and the LLM is
+/// expected to reference indices from that latest snapshot.
+#[derive(Debug, Clone)]
+pub enum Target {
+    Selector(String),
+    Index(u32),
+}
+
+impl Target {
+    pub fn selector(s: impl Into<String>) -> Self {
+        Target::Selector(s.into())
+    }
+
+    pub fn index(i: u32) -> Self {
+        Target::Index(i)
+    }
+}
+
+/// One step in [`BrowseSession::chain`]. Mirrors the standalone
+/// primitives so an LLM can batch a multi-action plan into a single
+/// MCP / library round trip — saving N-1 message-pair latencies on
+/// form-fill flows. Modeled on browser-use's `max_actions_per_step`
+/// (default 4) but with no hard cap; the actor processes the list
+/// in order and stops at the first error.
+#[derive(Debug, Clone)]
+pub enum ChainStep {
+    Click(Target),
+    Fill {
+        target: Target,
+        value: String,
+    },
+    Submit(Target),
+    Goto(String),
+    Read {
+        target: Target,
+        mode: ReadMode,
+    },
+    Eval(String),
+    Snapshot,
+    /// Fire keyboard events on the matched element (single keypress).
+    PressKey {
+        target: Target,
+        key: String,
+    },
+    /// Set a `<select>`'s value to the option whose `value=` matches
+    /// (falls back to matching the option's visible text).
+    SelectOption {
+        target: Target,
+        value: String,
+    },
+    /// Click the first link/button whose visible text matches.
+    /// Case-insensitive, trimmed, exact match preferred over substring.
+    ClickText(String),
+    /// Block until a selector resolves or `timeout_ms` elapses. Polls
+    /// every ~50 ms. No-op success when the selector already matches.
+    WaitFor {
+        selector: String,
+        timeout_ms: u64,
+    },
+    /// Block until visible body text contains `needle` or `timeout_ms`
+    /// elapses. Same polling cadence as `WaitFor`.
+    WaitForText {
+        needle: String,
+        timeout_ms: u64,
+    },
+    /// Pause the actor for `ms` milliseconds — the bouncy DOM is
+    /// fully synchronous so this is mostly a courtesy / pacing knob.
+    Wait {
+        ms: u64,
+    },
+    /// Pop one entry off the back-history stack and re-navigate.
+    Back,
+    /// Pop one entry off the forward-history stack and re-navigate.
+    Forward,
+}
+
+/// One result entry from [`BrowseSession::chain`]. The actor records
+/// one of these per step — callers typically only need the last
+/// snapshot, but per-step results help debug a chain that bailed
+/// halfway.
+#[derive(Debug, Clone)]
+pub enum ChainStepOutput {
+    Snapshot(PageSnapshot),
+    Reads(Vec<String>),
+    Eval {
+        result: String,
+        snapshot: PageSnapshot,
+    },
+}
+
 /// A held-open browser session. Cheap to clone the channel handle but
 /// not the underlying actor — clone the surface for shared access.
 pub struct BrowseSession {
@@ -197,6 +293,157 @@ impl BrowseSession {
         self.send(|reply| Command::Snapshot { reply }).await
     }
 
+    /// Click whichever of `selector` / `index` resolves first. The
+    /// index variant looks up the element in a fresh snapshot of the
+    /// current page; the selector variant goes straight to JS.
+    pub async fn click_target(&self, target: Target) -> Result<PageSnapshot, BrowseError> {
+        self.send(|reply| Command::ClickTarget { target, reply })
+            .await
+    }
+
+    /// `fill` against either a selector or a snapshot index.
+    pub async fn fill_target(
+        &self,
+        target: Target,
+        value: &str,
+    ) -> Result<PageSnapshot, BrowseError> {
+        self.send(|reply| Command::FillTarget {
+            target,
+            value: value.to_string(),
+            reply,
+        })
+        .await
+    }
+
+    /// `submit` against either a selector or a snapshot index.
+    pub async fn submit_target(&self, target: Target) -> Result<PageSnapshot, BrowseError> {
+        self.send(|reply| Command::SubmitTarget { target, reply })
+            .await
+    }
+
+    /// `read` against either a selector or a snapshot index.
+    pub async fn read_target(
+        &self,
+        target: Target,
+        mode: ReadMode,
+    ) -> Result<Vec<String>, BrowseError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::ReadTarget {
+                target,
+                mode,
+                reply: tx,
+            })
+            .map_err(|_| BrowseError::ActorGone)?;
+        rx.await.map_err(|_| BrowseError::ActorGone)?
+    }
+
+    /// Click the first link/button whose visible text matches. The
+    /// match is trimmed, case-insensitive, and prefers exact equality
+    /// over substring match.
+    pub async fn click_text(&self, text: &str) -> Result<PageSnapshot, BrowseError> {
+        self.send(|reply| Command::ClickText {
+            text: text.to_string(),
+            reply,
+        })
+        .await
+    }
+
+    /// Set a `<select>`'s value to the option whose `value=` matches
+    /// (or, falling back, whose visible text matches). Dispatches
+    /// `change` so listeners on the page react.
+    pub async fn select_option(
+        &self,
+        target: Target,
+        value: &str,
+    ) -> Result<PageSnapshot, BrowseError> {
+        self.send(|reply| Command::SelectOption {
+            target,
+            value: value.to_string(),
+            reply,
+        })
+        .await
+    }
+
+    /// Fire `keydown` + `keyup` (and `keypress` for printable keys) on
+    /// the matched element. `key` accepts either a single character
+    /// or one of the named keys (`Enter`, `Tab`, `Escape`, `ArrowUp`,
+    /// `ArrowDown`, `ArrowLeft`, `ArrowRight`, `Backspace`).
+    pub async fn press_key(&self, target: Target, key: &str) -> Result<PageSnapshot, BrowseError> {
+        self.send(|reply| Command::PressKey {
+            target,
+            key: key.to_string(),
+            reply,
+        })
+        .await
+    }
+
+    /// Block until `selector` matches at least one element on the
+    /// current page, or until `timeout_ms` elapses. Returns the latest
+    /// snapshot in either case (`Err(NoMatch)` on timeout). Polls
+    /// every ~50 ms — bouncy's DOM is synchronous so the polling
+    /// only ever observes script-driven mutations.
+    pub async fn wait_for(
+        &self,
+        selector: &str,
+        timeout_ms: u64,
+    ) -> Result<PageSnapshot, BrowseError> {
+        self.send(|reply| Command::WaitFor {
+            selector: selector.to_string(),
+            timeout_ms,
+            reply,
+        })
+        .await
+    }
+
+    /// Like [`Self::wait_for`] but matches against the page's visible
+    /// body text rather than a CSS selector.
+    pub async fn wait_for_text(
+        &self,
+        needle: &str,
+        timeout_ms: u64,
+    ) -> Result<PageSnapshot, BrowseError> {
+        self.send(|reply| Command::WaitForText {
+            needle: needle.to_string(),
+            timeout_ms,
+            reply,
+        })
+        .await
+    }
+
+    /// Sleep for `ms` milliseconds. Useful as a pacing knob between
+    /// requests when you don't want the chain hammering a server.
+    pub async fn wait_ms(&self, ms: u64) -> Result<PageSnapshot, BrowseError> {
+        self.send(|reply| Command::WaitMs { ms, reply }).await
+    }
+
+    /// Re-navigate to the previously-visited URL. Errors with
+    /// `BrowseError::Io("history empty")` when there's nothing to go
+    /// back to. Implemented via a per-session URL stack — bouncy's
+    /// V8 doesn't model real `history.back()` semantics.
+    pub async fn back(&self) -> Result<PageSnapshot, BrowseError> {
+        self.send(|reply| Command::Back { reply }).await
+    }
+
+    /// Inverse of [`Self::back`]. Errors when nothing has been
+    /// `back`ed yet on this session.
+    pub async fn forward(&self) -> Result<PageSnapshot, BrowseError> {
+        self.send(|reply| Command::Forward { reply }).await
+    }
+
+    /// Run a list of [`ChainStep`]s in order, returning per-step
+    /// outputs. Stops at the first error so callers can see how far
+    /// the chain got. Inspired by browser-use's
+    /// `max_actions_per_step` — lets an LLM batch a planned sequence
+    /// (fill 3 fields, submit, read result) into one round trip.
+    pub async fn chain(&self, steps: Vec<ChainStep>) -> Result<Vec<ChainStepOutput>, BrowseError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::Chain { steps, reply: tx })
+            .map_err(|_| BrowseError::ActorGone)?;
+        rx.await.map_err(|_| BrowseError::ActorGone)?
+    }
+
     fn spawn_actor(opts: BrowseOpts) -> Self {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<Command>();
         let outer_handle = tokio::runtime::Handle::current();
@@ -259,6 +506,62 @@ enum Command {
     Snapshot {
         reply: oneshot::Sender<Result<PageSnapshot, BrowseError>>,
     },
+    ClickTarget {
+        target: Target,
+        reply: oneshot::Sender<Result<PageSnapshot, BrowseError>>,
+    },
+    FillTarget {
+        target: Target,
+        value: String,
+        reply: oneshot::Sender<Result<PageSnapshot, BrowseError>>,
+    },
+    SubmitTarget {
+        target: Target,
+        reply: oneshot::Sender<Result<PageSnapshot, BrowseError>>,
+    },
+    ReadTarget {
+        target: Target,
+        mode: ReadMode,
+        reply: oneshot::Sender<Result<Vec<String>, BrowseError>>,
+    },
+    ClickText {
+        text: String,
+        reply: oneshot::Sender<Result<PageSnapshot, BrowseError>>,
+    },
+    SelectOption {
+        target: Target,
+        value: String,
+        reply: oneshot::Sender<Result<PageSnapshot, BrowseError>>,
+    },
+    PressKey {
+        target: Target,
+        key: String,
+        reply: oneshot::Sender<Result<PageSnapshot, BrowseError>>,
+    },
+    WaitFor {
+        selector: String,
+        timeout_ms: u64,
+        reply: oneshot::Sender<Result<PageSnapshot, BrowseError>>,
+    },
+    WaitForText {
+        needle: String,
+        timeout_ms: u64,
+        reply: oneshot::Sender<Result<PageSnapshot, BrowseError>>,
+    },
+    WaitMs {
+        ms: u64,
+        reply: oneshot::Sender<Result<PageSnapshot, BrowseError>>,
+    },
+    Back {
+        reply: oneshot::Sender<Result<PageSnapshot, BrowseError>>,
+    },
+    Forward {
+        reply: oneshot::Sender<Result<PageSnapshot, BrowseError>>,
+    },
+    Chain {
+        steps: Vec<ChainStep>,
+        reply: oneshot::Sender<Result<Vec<ChainStepOutput>, BrowseError>>,
+    },
 }
 
 /// State held inside the actor for the lifetime of a session.
@@ -268,6 +571,14 @@ struct ActorState {
     current_url: String,
     snapshot_opts: SnapshotOpts,
     stealth: bool,
+    /// Back-history stack — URLs visited before `current_url`. Pushed
+    /// every time `navigate_blocking` lands on a fresh URL; popped by
+    /// `Back`.
+    back_stack: Vec<String>,
+    /// Forward-history stack — URLs popped off `back_stack`. Cleared
+    /// on any forward navigation that isn't itself a `Forward` (mirror
+    /// of how real browsers behave).
+    forward_stack: Vec<String>,
 }
 
 impl ActorState {
@@ -289,6 +600,8 @@ impl ActorState {
             current_url: String::new(),
             snapshot_opts: opts.snapshot_opts.clone(),
             stealth: opts.stealth,
+            back_stack: Vec::new(),
+            forward_stack: Vec::new(),
         })
     }
 
@@ -299,7 +612,20 @@ impl ActorState {
         url: &str,
         outer_handle: &tokio::runtime::Handle,
     ) -> Result<(), BrowseError> {
+        self.navigate_blocking_inner(url, outer_handle, /* tracked = */ true)
+    }
+
+    /// Inner helper that lets `Back`/`Forward` opt out of pushing onto
+    /// the history stack — those commands manipulate the stacks
+    /// themselves rather than appending to them.
+    fn navigate_blocking_inner(
+        &mut self,
+        url: &str,
+        outer_handle: &tokio::runtime::Handle,
+        tracked: bool,
+    ) -> Result<(), BrowseError> {
         let mut current = url.to_string();
+        let prev = self.current_url.clone();
         for _ in 0..=MAX_NAV_HOPS {
             let resp = outer_handle.block_on(self.fetcher.get(&current))?;
             let body = std::str::from_utf8(&resp.body).map_err(|_| BrowseError::NotUtf8)?;
@@ -309,6 +635,12 @@ impl ActorState {
             if let Some(next) = self.rt.take_pending_nav() {
                 current = next;
             } else {
+                if tracked && !prev.is_empty() && prev != self.current_url {
+                    self.back_stack.push(prev);
+                    // Any new (non-back/forward) navigation kills the
+                    // forward stack — same way Chrome / Firefox do it.
+                    self.forward_stack.clear();
+                }
                 return Ok(());
             }
         }
@@ -345,6 +677,23 @@ impl ActorState {
             &self.current_url,
             self.snapshot_opts.clone(),
         ))
+    }
+
+    /// Resolve a [`Target`] to a CSS selector against the current
+    /// page. Selector targets pass through; index targets are
+    /// resolved by snapshotting and looking up the index in the flat
+    /// `interactive` list. Errors with `NoMatch` if the index doesn't
+    /// exist in the current snapshot.
+    fn resolve_target(&mut self, target: &Target) -> Result<String, BrowseError> {
+        match target {
+            Target::Selector(s) => Ok(s.clone()),
+            Target::Index(i) => {
+                let snap = self.snapshot_now()?;
+                snap.selector_for_index(*i)
+                    .map(|s| s.to_string())
+                    .ok_or_else(|| BrowseError::NoMatch(format!("@{i}")))
+            }
+        }
     }
 }
 
@@ -405,6 +754,90 @@ fn actor_main(
             Command::Snapshot { reply } => {
                 let _ = reply.send(state.snapshot_now());
             }
+            Command::ClickTarget { target, reply } => {
+                let result = state
+                    .resolve_target(&target)
+                    .and_then(|sel| run_click(&mut state, &outer_handle, &sel));
+                let _ = reply.send(result);
+            }
+            Command::FillTarget {
+                target,
+                value,
+                reply,
+            } => {
+                let result = state
+                    .resolve_target(&target)
+                    .and_then(|sel| run_fill(&mut state, &outer_handle, &sel, &value));
+                let _ = reply.send(result);
+            }
+            Command::SubmitTarget { target, reply } => {
+                let result = state
+                    .resolve_target(&target)
+                    .and_then(|sel| run_submit(&mut state, &outer_handle, &sel));
+                let _ = reply.send(result);
+            }
+            Command::ReadTarget {
+                target,
+                mode,
+                reply,
+            } => {
+                let result = state
+                    .resolve_target(&target)
+                    .and_then(|sel| run_read(&mut state, &sel, mode));
+                let _ = reply.send(result);
+            }
+            Command::ClickText { text, reply } => {
+                let result = run_click_text(&mut state, &outer_handle, &text);
+                let _ = reply.send(result);
+            }
+            Command::SelectOption {
+                target,
+                value,
+                reply,
+            } => {
+                let result = state
+                    .resolve_target(&target)
+                    .and_then(|sel| run_select_option(&mut state, &outer_handle, &sel, &value));
+                let _ = reply.send(result);
+            }
+            Command::PressKey { target, key, reply } => {
+                let result = state
+                    .resolve_target(&target)
+                    .and_then(|sel| run_press_key(&mut state, &outer_handle, &sel, &key));
+                let _ = reply.send(result);
+            }
+            Command::WaitFor {
+                selector,
+                timeout_ms,
+                reply,
+            } => {
+                let result = run_wait_for(&mut state, &outer_handle, &selector, timeout_ms);
+                let _ = reply.send(result);
+            }
+            Command::WaitForText {
+                needle,
+                timeout_ms,
+                reply,
+            } => {
+                let result = run_wait_for_text(&mut state, &outer_handle, &needle, timeout_ms);
+                let _ = reply.send(result);
+            }
+            Command::WaitMs { ms, reply } => {
+                let result = run_wait_ms(&mut state, &outer_handle, ms);
+                let _ = reply.send(result);
+            }
+            Command::Back { reply } => {
+                let result = run_back(&mut state, &outer_handle);
+                let _ = reply.send(result);
+            }
+            Command::Forward { reply } => {
+                let result = run_forward(&mut state, &outer_handle);
+                let _ = reply.send(result);
+            }
+            Command::Chain { steps, reply } => {
+                let result = run_chain(&mut state, &outer_handle, steps);
+                let _ = reply.send(result);
+            }
         }
     }
 }
@@ -417,13 +850,27 @@ fn send_construction_failure(cmd: Command, e: &BrowseError) {
         | Command::Click { reply, .. }
         | Command::Fill { reply, .. }
         | Command::Submit { reply, .. }
-        | Command::Snapshot { reply, .. } => {
+        | Command::Snapshot { reply, .. }
+        | Command::ClickTarget { reply, .. }
+        | Command::FillTarget { reply, .. }
+        | Command::SubmitTarget { reply, .. }
+        | Command::ClickText { reply, .. }
+        | Command::SelectOption { reply, .. }
+        | Command::PressKey { reply, .. }
+        | Command::WaitFor { reply, .. }
+        | Command::WaitForText { reply, .. }
+        | Command::WaitMs { reply, .. }
+        | Command::Back { reply, .. }
+        | Command::Forward { reply, .. } => {
             let _ = reply.send(Err(err()));
         }
-        Command::Read { reply, .. } => {
+        Command::Read { reply, .. } | Command::ReadTarget { reply, .. } => {
             let _ = reply.send(Err(err()));
         }
         Command::Eval { reply, .. } => {
+            let _ = reply.send(Err(err()));
+        }
+        Command::Chain { reply, .. } => {
             let _ = reply.send(Err(err()));
         }
     }
@@ -665,6 +1112,375 @@ fn run_eval(
 /// Uses `serde_json` so all the escaping rules are handled correctly.
 fn js_string(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
+}
+
+// ---- new primitives ---------------------------------------------------------
+
+/// Click the first link/button whose visible text matches. The match
+/// is trimmed + ASCII-case-insensitive; exact equality wins, otherwise
+/// the first substring hit wins. Searches `<a>` and `<button>` only —
+/// arbitrary clickable divs would need a selector.
+fn run_click_text(
+    state: &mut ActorState,
+    handle: &tokio::runtime::Handle,
+    text: &str,
+) -> Result<PageSnapshot, BrowseError> {
+    let needle = text.trim();
+    let html = state.rt.dump_html()?;
+    let doc = Document::parse(&html).map_err(|e| BrowseError::Dom(e.to_string()))?;
+    let mut exact: Option<String> = None;
+    let mut substring: Option<String> = None;
+    for tag in ["a", "button"] {
+        for nid in doc.query_selector_all(tag) {
+            let body = doc.text_content(nid);
+            let body_t = body.trim();
+            if body_t.eq_ignore_ascii_case(needle) {
+                exact = Some(crate::snapshot::unique_selector(&doc, nid));
+                break;
+            }
+            if substring.is_none() && contains_ignore_ascii_case(body_t, needle) {
+                substring = Some(crate::snapshot::unique_selector(&doc, nid));
+            }
+        }
+        if exact.is_some() {
+            break;
+        }
+    }
+    let selector = exact
+        .or(substring)
+        .ok_or_else(|| BrowseError::NoMatch(format!("text: {needle:?}")))?;
+    run_click(state, handle, &selector)
+}
+
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    let h = haystack.to_ascii_lowercase();
+    let n = needle.to_ascii_lowercase();
+    h.contains(&n)
+}
+
+/// Set a `<select>`'s value via JS, dispatching `input` + `change`.
+/// `value` matches against `option.value` first, then against
+/// `option.text` so the LLM can use whichever it has.
+fn run_select_option(
+    state: &mut ActorState,
+    handle: &tokio::runtime::Handle,
+    selector: &str,
+    value: &str,
+) -> Result<PageSnapshot, BrowseError> {
+    let expr = format!(
+        r#"(function(){{
+            var e = document.querySelector({sel});
+            if (!e) throw new Error('no match');
+            if (e.tagName !== 'SELECT') throw new Error('not a select');
+            var want = {val};
+            var matched = -1;
+            var opts = e.querySelectorAll('option');
+            for (var i = 0; i < opts.length; i++) {{
+                var v = opts[i].getAttribute('value');
+                if (v === null) v = (opts[i].textContent || '').trim();
+                if (v === want) {{ matched = i; break; }}
+            }}
+            if (matched < 0) {{
+                for (var j = 0; j < opts.length; j++) {{
+                    if ((opts[j].textContent || '').trim() === want) {{ matched = j; break; }}
+                }}
+            }}
+            if (matched < 0) throw new Error('no option matches');
+            e.value = opts[matched].getAttribute('value') !== null
+                      ? opts[matched].getAttribute('value')
+                      : (opts[matched].textContent || '').trim();
+            e.dispatchEvent(new Event('input', {{bubbles:true}}));
+            e.dispatchEvent(new Event('change', {{bubbles:true}}));
+            return 'ok';
+        }})()"#,
+        sel = js_string(selector),
+        val = js_string(value),
+    );
+    state.rt.eval(&expr).map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("no match") {
+            BrowseError::NoMatch(selector.to_string())
+        } else if msg.contains("not a select") {
+            BrowseError::Io(format!("element {selector:?} is not a <select>"))
+        } else if msg.contains("no option matches") {
+            BrowseError::NoMatch(format!("option {value:?} in {selector:?}"))
+        } else {
+            BrowseError::Js(e)
+        }
+    })?;
+    state.drain_navs(handle)?;
+    state.snapshot_now()
+}
+
+/// Dispatch keyboard events on the matched element. Synthesizes
+/// `keydown` + (optionally `keypress`) + `keyup`. Single-character
+/// keys count as printable; named keys (Enter, Tab, Escape,
+/// ArrowUp/Down/Left/Right, Backspace) are passed through with
+/// reasonable `keyCode` values for the legacy listeners that still
+/// check them.
+fn run_press_key(
+    state: &mut ActorState,
+    handle: &tokio::runtime::Handle,
+    selector: &str,
+    key: &str,
+) -> Result<PageSnapshot, BrowseError> {
+    let key_code = key_code_for(key);
+    let printable = key.chars().count() == 1;
+    let expr = format!(
+        r#"(function(){{
+            var e = document.querySelector({sel});
+            if (!e) throw new Error('no match');
+            var key = {key_str};
+            var code = {code};
+            var printable = {printable};
+            function fire(type) {{
+                var ev = new KeyboardEvent(type, {{
+                    key: key, code: key, keyCode: code, which: code,
+                    bubbles: true, cancelable: true,
+                }});
+                e.dispatchEvent(ev);
+            }}
+            fire('keydown');
+            if (printable) fire('keypress');
+            fire('keyup');
+            return 'ok';
+        }})()"#,
+        sel = js_string(selector),
+        key_str = js_string(key),
+        code = key_code,
+        printable = if printable { "true" } else { "false" },
+    );
+    state.rt.eval(&expr).map_err(|e| {
+        if e.to_string().contains("no match") {
+            BrowseError::NoMatch(selector.to_string())
+        } else {
+            BrowseError::Js(e)
+        }
+    })?;
+    state.drain_navs(handle)?;
+    state.snapshot_now()
+}
+
+/// Approximate `keyCode` mapping for the named keys the LLM is most
+/// likely to send. Legacy keyup/keydown listeners on real sites still
+/// branch on `keyCode`/`which`, so emitting plausible values matters
+/// even though `key` is the modern surface.
+fn key_code_for(key: &str) -> u32 {
+    match key {
+        "Enter" => 13,
+        "Tab" => 9,
+        "Escape" | "Esc" => 27,
+        "Backspace" => 8,
+        "Delete" => 46,
+        "ArrowUp" => 38,
+        "ArrowDown" => 40,
+        "ArrowLeft" => 37,
+        "ArrowRight" => 39,
+        " " | "Space" => 32,
+        s if s.chars().count() == 1 => {
+            let c = s.chars().next().unwrap();
+            (c as u32).to_ascii_uppercase_u32()
+        }
+        _ => 0,
+    }
+}
+
+trait UpperU32 {
+    fn to_ascii_uppercase_u32(self) -> u32;
+}
+impl UpperU32 for u32 {
+    fn to_ascii_uppercase_u32(self) -> u32 {
+        if (b'a' as u32..=b'z' as u32).contains(&self) {
+            self - 32
+        } else {
+            self
+        }
+    }
+}
+
+const WAIT_POLL_INTERVAL_MS: u64 = 50;
+
+/// Block until `selector` resolves. Polls every
+/// `WAIT_POLL_INTERVAL_MS` milliseconds; returns the latest snapshot
+/// on success, `BrowseError::NoMatch` on timeout.
+fn run_wait_for(
+    state: &mut ActorState,
+    handle: &tokio::runtime::Handle,
+    selector: &str,
+    timeout_ms: u64,
+) -> Result<PageSnapshot, BrowseError> {
+    let start = std::time::Instant::now();
+    loop {
+        let html = state.rt.dump_html()?;
+        let doc = Document::parse(&html).map_err(|e| BrowseError::Dom(e.to_string()))?;
+        if !doc.query_selector_all(selector).is_empty() {
+            return state.snapshot_now();
+        }
+        if start.elapsed().as_millis() as u64 >= timeout_ms {
+            return Err(BrowseError::NoMatch(format!(
+                "{selector:?} (waited {timeout_ms}ms)"
+            )));
+        }
+        handle.block_on(tokio::time::sleep(std::time::Duration::from_millis(
+            WAIT_POLL_INTERVAL_MS,
+        )));
+    }
+}
+
+fn run_wait_for_text(
+    state: &mut ActorState,
+    handle: &tokio::runtime::Handle,
+    needle: &str,
+    timeout_ms: u64,
+) -> Result<PageSnapshot, BrowseError> {
+    let start = std::time::Instant::now();
+    loop {
+        let html = state.rt.dump_html()?;
+        let doc = Document::parse(&html).map_err(|e| BrowseError::Dom(e.to_string()))?;
+        let body = doc.body_text();
+        if contains_ignore_ascii_case(&body, needle) {
+            return state.snapshot_now();
+        }
+        if start.elapsed().as_millis() as u64 >= timeout_ms {
+            return Err(BrowseError::NoMatch(format!(
+                "text {needle:?} (waited {timeout_ms}ms)"
+            )));
+        }
+        handle.block_on(tokio::time::sleep(std::time::Duration::from_millis(
+            WAIT_POLL_INTERVAL_MS,
+        )));
+    }
+}
+
+fn run_wait_ms(
+    state: &mut ActorState,
+    handle: &tokio::runtime::Handle,
+    ms: u64,
+) -> Result<PageSnapshot, BrowseError> {
+    handle.block_on(tokio::time::sleep(std::time::Duration::from_millis(ms)));
+    state.snapshot_now()
+}
+
+fn run_back(
+    state: &mut ActorState,
+    handle: &tokio::runtime::Handle,
+) -> Result<PageSnapshot, BrowseError> {
+    let prev = state
+        .back_stack
+        .pop()
+        .ok_or_else(|| BrowseError::Io("history empty".into()))?;
+    let current = state.current_url.clone();
+    state.navigate_blocking_inner(&prev, handle, /* tracked = */ false)?;
+    if !current.is_empty() {
+        state.forward_stack.push(current);
+    }
+    state.snapshot_now()
+}
+
+fn run_forward(
+    state: &mut ActorState,
+    handle: &tokio::runtime::Handle,
+) -> Result<PageSnapshot, BrowseError> {
+    let next = state
+        .forward_stack
+        .pop()
+        .ok_or_else(|| BrowseError::Io("forward stack empty".into()))?;
+    let current = state.current_url.clone();
+    state.navigate_blocking_inner(&next, handle, /* tracked = */ false)?;
+    if !current.is_empty() {
+        state.back_stack.push(current);
+    }
+    state.snapshot_now()
+}
+
+/// Run a chain of [`ChainStep`]s in order. Stops at the first error
+/// so the caller can see how far the chain got from the partial
+/// result vector. Each step's output is captured.
+fn run_chain(
+    state: &mut ActorState,
+    handle: &tokio::runtime::Handle,
+    steps: Vec<ChainStep>,
+) -> Result<Vec<ChainStepOutput>, BrowseError> {
+    let mut out = Vec::with_capacity(steps.len());
+    for step in steps {
+        match step {
+            ChainStep::Click(target) => {
+                let sel = state.resolve_target(&target)?;
+                let snap = run_click(state, handle, &sel)?;
+                out.push(ChainStepOutput::Snapshot(snap));
+            }
+            ChainStep::Fill { target, value } => {
+                let sel = state.resolve_target(&target)?;
+                let snap = run_fill(state, handle, &sel, &value)?;
+                out.push(ChainStepOutput::Snapshot(snap));
+            }
+            ChainStep::Submit(target) => {
+                let sel = state.resolve_target(&target)?;
+                let snap = run_submit(state, handle, &sel)?;
+                out.push(ChainStepOutput::Snapshot(snap));
+            }
+            ChainStep::Goto(url) => {
+                state.navigate_blocking(&url, handle)?;
+                out.push(ChainStepOutput::Snapshot(state.snapshot_now()?));
+            }
+            ChainStep::Read { target, mode } => {
+                let sel = state.resolve_target(&target)?;
+                let reads = run_read(state, &sel, mode)?;
+                out.push(ChainStepOutput::Reads(reads));
+            }
+            ChainStep::Eval(expr) => {
+                let r = run_eval(state, handle, &expr)?;
+                out.push(ChainStepOutput::Eval {
+                    result: r.result,
+                    snapshot: r.snapshot,
+                });
+            }
+            ChainStep::Snapshot => {
+                out.push(ChainStepOutput::Snapshot(state.snapshot_now()?));
+            }
+            ChainStep::PressKey { target, key } => {
+                let sel = state.resolve_target(&target)?;
+                let snap = run_press_key(state, handle, &sel, &key)?;
+                out.push(ChainStepOutput::Snapshot(snap));
+            }
+            ChainStep::SelectOption { target, value } => {
+                let sel = state.resolve_target(&target)?;
+                let snap = run_select_option(state, handle, &sel, &value)?;
+                out.push(ChainStepOutput::Snapshot(snap));
+            }
+            ChainStep::ClickText(text) => {
+                let snap = run_click_text(state, handle, &text)?;
+                out.push(ChainStepOutput::Snapshot(snap));
+            }
+            ChainStep::WaitFor {
+                selector,
+                timeout_ms,
+            } => {
+                let snap = run_wait_for(state, handle, &selector, timeout_ms)?;
+                out.push(ChainStepOutput::Snapshot(snap));
+            }
+            ChainStep::WaitForText { needle, timeout_ms } => {
+                let snap = run_wait_for_text(state, handle, &needle, timeout_ms)?;
+                out.push(ChainStepOutput::Snapshot(snap));
+            }
+            ChainStep::Wait { ms } => {
+                let snap = run_wait_ms(state, handle, ms)?;
+                out.push(ChainStepOutput::Snapshot(snap));
+            }
+            ChainStep::Back => {
+                let snap = run_back(state, handle)?;
+                out.push(ChainStepOutput::Snapshot(snap));
+            }
+            ChainStep::Forward => {
+                let snap = run_forward(state, handle)?;
+                out.push(ChainStepOutput::Snapshot(snap));
+            }
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

@@ -27,6 +27,13 @@ use std::time::{Duration, Instant};
 use bouncy_browse::{BrowseError, BrowseOpts, BrowseSession, PageSnapshot};
 use thiserror::Error;
 
+/// Per-session secrets table. Keys are LLM-visible placeholders;
+/// values are real secrets. When a `fill` (or chained `fill`) call
+/// arrives with a value that matches a placeholder exactly, we
+/// substitute the real value before reaching the page so the LLM
+/// never sees the secret. Mirrors browser-use's `sensitive_data`.
+pub type SecretMap = HashMap<String, String>;
+
 /// Default per-server cap on active sessions.
 pub const DEFAULT_MAX_SESSIONS: usize = 20;
 /// Default idle timeout — sessions untouched longer than this are
@@ -52,6 +59,9 @@ pub enum StoreError {
 struct Entry {
     session: Arc<BrowseSession>,
     last_used: Instant,
+    /// Optional placeholder→secret map for sensitive_data masking.
+    /// `None` means no secrets registered for this session.
+    secrets: Option<Arc<SecretMap>>,
 }
 
 /// Concurrent map of active sessions with hard cap + idle expiry.
@@ -100,6 +110,18 @@ impl BrowseStore {
         url: &str,
         opts: BrowseOpts,
     ) -> Result<(String, PageSnapshot), StoreError> {
+        self.open_with_secrets(url, opts, None).await
+    }
+
+    /// Open with a placeholder→secret map. `bouncy_browse_fill` /
+    /// chain-fill substitutes any value that exactly matches a key
+    /// for the corresponding real value before reaching the page.
+    pub async fn open_with_secrets(
+        &self,
+        url: &str,
+        opts: BrowseOpts,
+        secrets: Option<SecretMap>,
+    ) -> Result<(String, PageSnapshot), StoreError> {
         // Check capacity BEFORE we spend time spinning up V8 + the actor.
         // Brief lock; release before the await.
         {
@@ -128,6 +150,7 @@ impl BrowseStore {
             Entry {
                 session: Arc::new(session),
                 last_used: Instant::now(),
+                secrets: secrets.map(Arc::new),
             },
         );
         Ok((id, snapshot))
@@ -145,6 +168,33 @@ impl BrowseStore {
             }
             None => Err(StoreError::NotFound(id.to_string())),
         }
+    }
+
+    /// Same as [`Self::touch`] but also returns the session's
+    /// secret-substitution map (if any). Used by tools that consume
+    /// `value` parameters so the LLM-facing placeholder gets swapped
+    /// for the real secret right before it reaches the page.
+    pub fn touch_with_secrets(
+        &self,
+        id: &str,
+    ) -> Result<(Arc<BrowseSession>, Option<Arc<SecretMap>>), StoreError> {
+        let mut g = self.inner.lock().expect("BrowseStore mutex poisoned");
+        match g.get_mut(id) {
+            Some(entry) => {
+                entry.last_used = Instant::now();
+                Ok((entry.session.clone(), entry.secrets.clone()))
+            }
+            None => Err(StoreError::NotFound(id.to_string())),
+        }
+    }
+
+    /// Look up the secret value for a placeholder, if one is
+    /// registered. Returns the placeholder unchanged when no match —
+    /// callers can substitute unconditionally.
+    pub fn unmask<'a>(secrets: Option<&'a Arc<SecretMap>>, value: &'a str) -> &'a str {
+        secrets
+            .and_then(|m| m.get(value).map(|s| s.as_str()))
+            .unwrap_or(value)
     }
 
     /// Explicit close. Returns `true` if a session was removed.

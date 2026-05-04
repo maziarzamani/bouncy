@@ -343,3 +343,312 @@ async fn snapshot_returns_current_page_state_unchanged() {
     assert_eq!(snap1.title, snap2.title);
     assert_eq!(snap1.forms.len(), snap2.forms.len());
 }
+
+// =============================================================================
+//  Tests for primitives adopted from browser-use:
+//  click_text, indexed targets, select_option, press_key, wait_for, back/forward,
+//  chain.
+// =============================================================================
+
+const SEARCH_PAGE: &str = r#"<!doctype html>
+<html><head><title>Search</title></head>
+<body>
+  <h1>Search</h1>
+  <a href="/results">Results</a>
+  <a href="/help">Help</a>
+  <button>Go</button>
+  <button>Cancel</button>
+</body></html>"#;
+
+const DROPDOWN_PAGE: &str = r#"<!doctype html>
+<html><head><title>Pick</title></head>
+<body>
+  <form action="/picked" method="GET">
+    <select id="topic" name="topic">
+      <option value="a">Apples</option>
+      <option value="b">Bananas</option>
+      <option value="c">Cherries</option>
+    </select>
+    <button type="submit">Submit</button>
+  </form>
+</body></html>"#;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn click_text_matches_button_by_visible_text() {
+    let addr = spawn_static(SEARCH_PAGE).await;
+    let (session, _) = BrowseSession::open(&format!("http://{addr}/"), BrowseOpts::default())
+        .await
+        .unwrap();
+    // "Go" is the first button — click_text should resolve to it.
+    let snap = session.click_text("Go").await.unwrap();
+    // We're on a static-fixture server so the page doesn't navigate; we
+    // just confirm the call succeeded and didn't error on the selector.
+    assert_eq!(snap.title, "Search");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn click_text_is_case_insensitive_and_trimmed() {
+    let addr = spawn_static(SEARCH_PAGE).await;
+    let (session, _) = BrowseSession::open(&format!("http://{addr}/"), BrowseOpts::default())
+        .await
+        .unwrap();
+    session.click_text("  cAnCeL ").await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn click_text_no_match_returns_typed_error() {
+    use bouncy_browse::BrowseError;
+    let addr = spawn_static(SEARCH_PAGE).await;
+    let (session, _) = BrowseSession::open(&format!("http://{addr}/"), BrowseOpts::default())
+        .await
+        .unwrap();
+    let err = session.click_text("Dropbox").await.unwrap_err();
+    assert!(matches!(err, BrowseError::NoMatch(_)), "got: {err}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fill_target_by_index_resolves_against_current_snapshot() {
+    use bouncy_browse::Target;
+    let addr = spawn_static(SIGNUP_PAGE).await;
+    let (session, snap) = BrowseSession::open(&format!("http://{addr}/"), BrowseOpts::default())
+        .await
+        .unwrap();
+    // Pick the email field by index — it has placeholder "you@example.com".
+    let email_idx = snap.forms[0]
+        .fields
+        .iter()
+        .find(|f| f.placeholder.as_deref() == Some("you@example.com"))
+        .unwrap()
+        .index;
+    let snap2 = session
+        .fill_target(Target::Index(email_idx), "me@x.test")
+        .await
+        .unwrap();
+    // After the fill, dump_html re-emits the input with value=me@x.test.
+    let same_idx_field = snap2.forms[0]
+        .fields
+        .iter()
+        .find(|f| f.placeholder.as_deref() == Some("you@example.com"))
+        .unwrap();
+    assert_eq!(same_idx_field.value.as_deref(), Some("me@x.test"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fill_target_by_index_unknown_returns_no_match() {
+    use bouncy_browse::{BrowseError, Target};
+    let addr = spawn_static(SIGNUP_PAGE).await;
+    let (session, _) = BrowseSession::open(&format!("http://{addr}/"), BrowseOpts::default())
+        .await
+        .unwrap();
+    let err = session
+        .fill_target(Target::Index(9999), "x")
+        .await
+        .unwrap_err();
+    assert!(matches!(err, BrowseError::NoMatch(_)), "got: {err}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn select_option_by_value_sets_select_value() {
+    use bouncy_browse::Target;
+    let addr = spawn_static(DROPDOWN_PAGE).await;
+    let (session, _) = BrowseSession::open(&format!("http://{addr}/"), BrowseOpts::default())
+        .await
+        .unwrap();
+    session
+        .select_option(Target::selector("#topic"), "b")
+        .await
+        .unwrap();
+    // Read the select's value back via eval.
+    let r = session
+        .eval("document.querySelector('#topic').value")
+        .await
+        .unwrap();
+    assert!(r.result.contains('b'), "got: {}", r.result);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn select_option_by_text_falls_back_when_value_doesnt_match() {
+    use bouncy_browse::Target;
+    let addr = spawn_static(DROPDOWN_PAGE).await;
+    let (session, _) = BrowseSession::open(&format!("http://{addr}/"), BrowseOpts::default())
+        .await
+        .unwrap();
+    // "Cherries" matches the option text, not its value.
+    session
+        .select_option(Target::selector("#topic"), "Cherries")
+        .await
+        .unwrap();
+    let r = session
+        .eval("document.querySelector('#topic').value")
+        .await
+        .unwrap();
+    assert!(r.result.contains('c'), "got: {}", r.result);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn select_option_unknown_value_returns_no_match() {
+    use bouncy_browse::{BrowseError, Target};
+    let addr = spawn_static(DROPDOWN_PAGE).await;
+    let (session, _) = BrowseSession::open(&format!("http://{addr}/"), BrowseOpts::default())
+        .await
+        .unwrap();
+    let err = session
+        .select_option(Target::selector("#topic"), "durians")
+        .await
+        .unwrap_err();
+    assert!(matches!(err, BrowseError::NoMatch(_)), "got: {err}");
+}
+
+const KEY_PAGE: &str = r#"<!doctype html>
+<html><head><title>Keys</title></head>
+<body>
+  <input id="x" name="x">
+  <div id="last">none</div>
+  <script>
+    var el = document.querySelector('#x');
+    el.addEventListener('keydown', function(e) {
+      document.querySelector('#last').textContent = 'down:' + e.key;
+    });
+  </script>
+</body></html>"#;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn press_key_dispatches_keydown_visible_to_handler() {
+    use bouncy_browse::Target;
+    let addr = spawn_static(KEY_PAGE).await;
+    let (session, _) = BrowseSession::open(&format!("http://{addr}/"), BrowseOpts::default())
+        .await
+        .unwrap();
+    session
+        .press_key(Target::selector("#x"), "Enter")
+        .await
+        .unwrap();
+    let reads = session
+        .read("#last", bouncy_browse::ReadMode::Text)
+        .await
+        .unwrap();
+    assert_eq!(reads, vec!["down:Enter".to_string()]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn wait_for_returns_immediately_when_selector_already_matches() {
+    let addr = spawn_static(SIGNUP_PAGE).await;
+    let (session, _) = BrowseSession::open(&format!("http://{addr}/"), BrowseOpts::default())
+        .await
+        .unwrap();
+    let snap = session.wait_for("#signup", 1000).await.unwrap();
+    assert_eq!(snap.forms.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn wait_for_times_out_when_selector_never_matches() {
+    use bouncy_browse::BrowseError;
+    let addr = spawn_static(SIGNUP_PAGE).await;
+    let (session, _) = BrowseSession::open(&format!("http://{addr}/"), BrowseOpts::default())
+        .await
+        .unwrap();
+    let err = session.wait_for(".never-here", 100).await.unwrap_err();
+    assert!(matches!(err, BrowseError::NoMatch(_)), "got: {err}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn wait_for_text_finds_existing_text() {
+    let addr = spawn_static(SIGNUP_PAGE).await;
+    let (session, _) = BrowseSession::open(&format!("http://{addr}/"), BrowseOpts::default())
+        .await
+        .unwrap();
+    let snap = session
+        .wait_for_text("create an account", 500)
+        .await
+        .unwrap();
+    assert_eq!(snap.title, "Sign up");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn back_forward_traverse_session_history() {
+    use bouncy_browse::BrowseError;
+    let addr = spawn_router(vec![("/", LANDING_PAGE), ("/signup", SIGNUP_PAGE)]).await;
+    let (session, snap) = BrowseSession::open(&format!("http://{addr}/"), BrowseOpts::default())
+        .await
+        .unwrap();
+    assert_eq!(snap.title, "Landing");
+
+    // No history yet.
+    assert!(matches!(
+        session.back().await.unwrap_err(),
+        BrowseError::Io(_)
+    ));
+
+    let s2 = session
+        .goto(&format!("http://{addr}/signup"))
+        .await
+        .unwrap();
+    assert_eq!(s2.title, "Sign up");
+
+    let back = session.back().await.unwrap();
+    assert_eq!(back.title, "Landing");
+
+    let fwd = session.forward().await.unwrap();
+    assert_eq!(fwd.title, "Sign up");
+
+    // Forward stack drained.
+    assert!(matches!(
+        session.forward().await.unwrap_err(),
+        BrowseError::Io(_)
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chain_runs_multiple_steps_in_one_round_trip() {
+    use bouncy_browse::{ChainStep, ChainStepOutput, Target};
+    let addr = spawn_static(SIGNUP_PAGE).await;
+    let (session, _) = BrowseSession::open(&format!("http://{addr}/"), BrowseOpts::default())
+        .await
+        .unwrap();
+    let outs = session
+        .chain(vec![
+            ChainStep::Fill {
+                target: Target::selector("#u"),
+                value: "alice".into(),
+            },
+            ChainStep::Fill {
+                target: Target::selector("[name=email]"),
+                value: "a@b.test".into(),
+            },
+            ChainStep::Snapshot,
+        ])
+        .await
+        .unwrap();
+    assert_eq!(outs.len(), 3);
+    let last = match &outs[2] {
+        ChainStepOutput::Snapshot(s) => s,
+        other => panic!("expected snapshot, got: {other:?}"),
+    };
+    let user_field = last.forms[0]
+        .fields
+        .iter()
+        .find(|f| f.name.as_deref() == Some("user"))
+        .unwrap();
+    assert_eq!(user_field.value.as_deref(), Some("alice"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chain_stops_at_first_error() {
+    use bouncy_browse::{BrowseError, ChainStep, Target};
+    let addr = spawn_static(SIGNUP_PAGE).await;
+    let (session, _) = BrowseSession::open(&format!("http://{addr}/"), BrowseOpts::default())
+        .await
+        .unwrap();
+    let err = session
+        .chain(vec![
+            ChainStep::Fill {
+                target: Target::selector("#u"),
+                value: "alice".into(),
+            },
+            ChainStep::Click(Target::selector(".not-here")),
+            ChainStep::Snapshot,
+        ])
+        .await
+        .unwrap_err();
+    assert!(matches!(err, BrowseError::NoMatch(_)), "got: {err}");
+}
