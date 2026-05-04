@@ -7,6 +7,17 @@ Files:
 - **`demo.sh`** — same demo as a plain shell script. Use this if you'd rather record with [asciinema](https://asciinema.org) or capture by hand.
 - **`comments-prep.md`** — likely top comments + drafted responses, so you're not improvising under load.
 
+## Before recording: upgrade your local `bouncy`
+
+The demo uses `click_text` and indexed snapshots — both shipped after PR #36 was merged. If your `bouncy` in `$PATH` is older (you'll see "unexpected argument '--select' found" or "unknown command 'click_text'"), upgrade once from this checkout before recording:
+
+```bash
+cargo install --path crates/bouncy-cli --force
+cargo install --path crates/bouncy-mcp --force
+```
+
+That swaps whatever crates.io version you had for the local build, which has every feature shown in the demo.
+
 ## Recording the demo
 
 Pick **one**:

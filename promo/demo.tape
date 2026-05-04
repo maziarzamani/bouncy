@@ -6,10 +6,16 @@
 # Goal: a 30-second loop demonstrating the three modes — scrape, browse,
 # drive. Speed is the headline, so we lean on `time` and explicit timings.
 #
-# Pre-conditions:
-#   - cargo install bouncy-cli bouncy-mcp  (or: cargo build --release in repo)
-#   - example.com reachable
-#   - VHS installed (brew install vhs)
+# Pre-conditions (do this BEFORE recording — the build is silent and
+# slow, you don't want it inside the gif):
+#
+#     # build the binaries from this checkout, install over whatever's
+#     # in $PATH so the demo lines below pick up the latest features
+#     # (click_text, --select, indexed snapshots).
+#     cargo install --path crates/bouncy-cli --force
+#     cargo install --path crates/bouncy-mcp --force
+#
+# Then: `vhs promo/demo.tape`.
 
 Output assets/demo.gif
 
@@ -25,15 +31,19 @@ Type "# bouncy — tiny Rust headless browser. no Chromium."
 Sleep 1s
 Enter
 
-# ─── 2. Scrape: fetch + extract in one shot (5s) ───────────────────
+# ─── 2. Scrape: time + dump in one shot (5s) ───────────────────────
+# `--dump text` works on every released version. The `time` output is
+# the actual headline — milliseconds, no Chromium boot.
 Type "# scrape — static page, no V8 boot"
 Enter
 Sleep 500ms
-Type "time bouncy fetch https://example.com --select h1 --dump text"
+Type "time bouncy fetch https://example.com --dump text"
 Enter
 Sleep 3s
 
 # ─── 3. Browse: stateful session with click_text (8s) ──────────────
+# click_text is post-PR-#36; requires a fresh `cargo install --path …
+# --force` if your $PATH binary is older than that.
 Type "# browse — stateful session, click by visible text"
 Enter
 Sleep 500ms
