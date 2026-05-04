@@ -1,10 +1,14 @@
-//! `bouncy` — single-binary scraping CLI.
+//! `bouncy` — single-binary scraping + browsing CLI.
 //!
-//! `fetch` / `scrape` flag surface, plus a CDP server for Playwright
-//! clients. Static pages use the lol-html / hyper-rustls path directly;
-//! JavaScript only boots when `--eval` or `--selector` is given (lazy V8
-//! init), so static workloads pay no V8 tax even though the binary ships
-//! V8.
+//! Subcommands:
+//!   - `fetch` / `scrape`: one URL or a parallel batch. Static path uses
+//!     the lol-html / hyper-rustls fast path; V8 only boots when `--eval`
+//!     or `--selector` is given, so static workloads pay no V8 tax even
+//!     though the binary ships V8.
+//!   - `browse`: stateful multi-step session that holds V8 + cookies +
+//!     DOM across `click` / `fill` / `submit` / `goto` / `read` / `eval`
+//!     steps. Scriptable as `--do "step"` chains or interactive as a REPL.
+//!   - `serve`: Chrome DevTools Protocol server (Playwright drop-in).
 //!
 //! Examples:
 //!   bouncy fetch URL [--dump html|text|links]
@@ -12,6 +16,7 @@
 //!   bouncy fetch URL --selector '[data-ready=\"1\"]' --dump html
 //!   bouncy fetch URL -X POST --body '...' -H 'Authorization: ...'
 //!   bouncy scrape URL... [--concurrency N] [--format json|text]
+//!   bouncy browse URL --do "fill input[name=q] rust" --do "submit form"
 
 mod browse;
 mod scrape;
@@ -30,7 +35,11 @@ use clap::{Parser, Subcommand, ValueEnum};
 use url::Url;
 
 #[derive(Parser, Debug)]
-#[command(name = "bouncy", version, about = "Headless scraping CLI (bouncy)")]
+#[command(
+    name = "bouncy",
+    version,
+    about = "Headless scraping + browsing CLI (bouncy)"
+)]
 struct Args {
     #[command(subcommand)]
     cmd: Cmd,

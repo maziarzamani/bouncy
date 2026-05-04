@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <strong>Tiny Rust headless browser for scraping.</strong>
+  <strong>Tiny Rust headless browser. Scrape pages or drive multi-step browse sessions — from a CLI, from a library, or autonomously from Claude (MCP).</strong>
 </p>
 
 <p align="center">
@@ -19,7 +19,13 @@
 
 ---
 
-bouncy is a web scraper. Tiny, fast, ships as a single binary — no Node, no Chrome, no Python to install. Point it at a URL and get back the HTML, the visible text, or every link on the page. If the page only renders properly with JavaScript, bouncy will run the JavaScript too. Use it from the command line like curl, or drop it in as a Playwright backend.
+bouncy started as a web scraper and grew into a tiny full-on browser. Single binary, no Node, no Chrome, no Python to install. Three things it does well:
+
+- **Scrape** — `bouncy fetch` / `bouncy scrape` for one URL or a parallel batch. Get back HTML, visible text, links, CSS-selector matches. Runs JavaScript only when the page actually needs it (lazy V8).
+- **Browse** — `bouncy browse` opens a stateful session that holds V8 + cookies + DOM across `click` / `fill` / `submit` / `goto` / `read` / `eval` steps. Scriptable as a one-liner chain or interactive as a REPL.
+- **Drive autonomously** — `bouncy-mcp` exposes the same browse primitives as MCP tools, so Claude Desktop / Cursor / Claude Code can open a page, find a form, fill it, submit it, and read the result without any code from you. Same pattern as [browser-use](https://github.com/browser-use/browser-use), without the Chromium dependency.
+
+Plus drop-in modes: use it from the shell like curl, or run `bouncy serve` as a Chrome DevTools Protocol backend that Playwright / puppeteer-core can connect to.
 
 ## Features
 

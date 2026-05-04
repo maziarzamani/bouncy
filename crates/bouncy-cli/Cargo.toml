@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Tiny Rust headless browser for scraping (CLI binary)."
+description = "Tiny Rust headless browser. Scrape pages or drive multi-step browse sessions (click / fill / submit / read) from the CLI."
 
 [[bin]]
 name = "bouncy"
