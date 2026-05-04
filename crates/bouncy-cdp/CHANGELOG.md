@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.8](https://github.com/maziarzamani/bouncy/compare/v0.1.7...v0.1.8) (2026-05-04)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * bouncy-js bumped from 0.1.7 to 0.1.8
+    * bouncy-fetch bumped from 0.1.7 to 0.1.8
+
 ## [0.1.7](https://github.com/maziarzamani/bouncy/compare/v0.1.6...v0.1.7) (2026-05-03)
 
 

@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.1.8](https://github.com/maziarzamani/bouncy/compare/v0.1.7...v0.1.8) (2026-05-04)
+
+
+### Features
+
+* **mcp:** bouncy_browse_* tools — Claude can now drive autonomous browse flows ([67b1959](https://github.com/maziarzamani/bouncy/commit/67b195908f650c97c2aada0976c6f850017adee1))
+* **mcp:** bouncy_browse_* tools — Claude can now drive autonomous browse flows ([ede0174](https://github.com/maziarzamani/bouncy/commit/ede017414f05c9ba0b429204c48cf18621987cb4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * bouncy-fetch bumped from 0.1.7 to 0.1.8
+    * bouncy-extract bumped from 0.1.7 to 0.1.8
+    * bouncy-js bumped from 0.1.7 to 0.1.8
+    * bouncy-dom bumped from 0.1.7 to 0.1.8
+    * bouncy-browse bumped from 0.1.7 to 0.1.8
+
 ## [0.1.7](https://github.com/maziarzamani/bouncy/compare/v0.1.6...v0.1.7) (2026-05-03)
 
 

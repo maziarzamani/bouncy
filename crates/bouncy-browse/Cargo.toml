@@ -1,6 +1,6 @@
 [package]
 name = "bouncy-browse"
-version = "0.1.7"
+version = "0.1.8"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -16,9 +16,9 @@ path = "src/lib.rs"
 e2e = []
 
 [dependencies]
-bouncy-js = { path = "../bouncy-js", version = "0.1.7" }
-bouncy-fetch = { path = "../bouncy-fetch", version = "0.1.7" }
-bouncy-dom = { path = "../bouncy-dom", version = "0.1.7" }
+bouncy-js = { path = "../bouncy-js", version = "0.1.8" }
+bouncy-fetch = { path = "../bouncy-fetch", version = "0.1.8" }
+bouncy-dom = { path = "../bouncy-dom", version = "0.1.8" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
