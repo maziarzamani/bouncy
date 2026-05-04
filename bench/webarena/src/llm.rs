@@ -2,13 +2,17 @@
 //!
 //! [`LlmClient`] is the only thing the agent loop depends on: given
 //! the conversation so far + the tool schemas, return the next
-//! assistant turn (text + zero or more tool calls). Two impls:
+//! assistant turn (text + zero or more tool calls). Three impls:
 //!
-//!   - [`AnthropicClient`] hits Anthropic's Messages API. Used for
-//!     real benchmark runs.
-//!   - [`ScriptedClient`] returns a pre-canned sequence of turns —
-//!     used by integration tests so we exercise the loop end-to-end
-//!     without burning API calls.
+//!   - [`AnthropicClient`] — direct Anthropic Messages API. Auth
+//!     via `ANTHROPIC_API_KEY`.
+//!   - [`BedrockClient`] (under the `bedrock` feature) — AWS
+//!     Bedrock's Converse API for the same Claude models. Auth via
+//!     the standard AWS credential chain (env vars, `~/.aws`, IAM
+//!     role). Pick this when your billing / data-residency story
+//!     wants Bedrock instead of Anthropic-direct.
+//!   - [`ScriptedClient`] — returns a pre-canned sequence of turns;
+//!     used by integration tests so the suite stays hermetic.
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -358,3 +362,277 @@ mod tests {
         }
     }
 }
+
+// ---- BedrockClient ----------------------------------------------------------
+
+#[cfg(feature = "bedrock")]
+mod bedrock {
+    use super::{AssistantTurn, Block, LlmClient, Message, Role};
+    use crate::tools::ToolCall;
+    use anyhow::{anyhow, Result};
+    use async_trait::async_trait;
+    use aws_sdk_bedrockruntime::types::{
+        ContentBlock, ConversationRole, Message as BrMessage, SystemContentBlock, Tool,
+        ToolConfiguration, ToolInputSchema, ToolResultBlock, ToolResultContentBlock,
+        ToolResultStatus, ToolSpecification, ToolUseBlock,
+    };
+    use aws_sdk_bedrockruntime::Client as BedrockApiClient;
+    use aws_smithy_types::Document;
+    use serde_json::Value;
+
+    /// AWS Bedrock client for the Converse API. Uses the standard
+    /// AWS credential chain — env vars (`AWS_ACCESS_KEY_ID` etc.),
+    /// `~/.aws/credentials`, or IAM role on EC2/ECS/Lambda.
+    ///
+    /// `model_id` is a Bedrock model identifier — for Claude that's
+    /// `anthropic.claude-sonnet-4-5-...-v1:0` style, NOT the bare
+    /// Anthropic ID. Inference profile ARNs also work.
+    pub struct BedrockClient {
+        api: BedrockApiClient,
+        model_id: String,
+    }
+
+    impl BedrockClient {
+        /// Build from the default AWS config. Honours `AWS_REGION`
+        /// / `AWS_DEFAULT_REGION` env vars; pass `region` to
+        /// override.
+        pub async fn from_env(model_id: impl Into<String>, region: Option<String>) -> Result<Self> {
+            let mut loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
+            if let Some(r) = region {
+                loader = loader.region(aws_config::Region::new(r));
+            }
+            let cfg = loader.load().await;
+            let api = BedrockApiClient::new(&cfg);
+            Ok(Self {
+                api,
+                model_id: model_id.into(),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl LlmClient for BedrockClient {
+        async fn next_turn(
+            &self,
+            system: &str,
+            messages: &[Message],
+            tools: &[Value],
+        ) -> Result<AssistantTurn> {
+            let br_messages: Vec<BrMessage> = messages
+                .iter()
+                .map(message_to_bedrock)
+                .collect::<Result<Vec<_>>>()?;
+
+            let mut tool_specs: Vec<Tool> = Vec::with_capacity(tools.len());
+            for t in tools {
+                tool_specs.push(tool_to_bedrock(t)?);
+            }
+            let tool_cfg = ToolConfiguration::builder()
+                .set_tools(Some(tool_specs))
+                .build()
+                .map_err(|e| anyhow!("build tool config: {e}"))?;
+
+            let resp = self
+                .api
+                .converse()
+                .model_id(&self.model_id)
+                .system(SystemContentBlock::Text(system.to_string()))
+                .set_messages(Some(br_messages))
+                .tool_config(tool_cfg)
+                .send()
+                .await
+                .map_err(|e| anyhow!("bedrock converse: {e}"))?;
+
+            let output = resp
+                .output()
+                .ok_or_else(|| anyhow!("bedrock response missing output"))?;
+            let msg = output
+                .as_message()
+                .map_err(|_| anyhow!("bedrock output was not a message"))?;
+            assistant_from_bedrock(msg)
+        }
+    }
+
+    fn message_to_bedrock(m: &Message) -> Result<BrMessage> {
+        let role = match m.role {
+            Role::User => ConversationRole::User,
+            Role::Assistant => ConversationRole::Assistant,
+        };
+        let content: Vec<ContentBlock> = m
+            .content
+            .iter()
+            .map(block_to_bedrock)
+            .collect::<Result<Vec<_>>>()?;
+        BrMessage::builder()
+            .role(role)
+            .set_content(Some(content))
+            .build()
+            .map_err(|e| anyhow!("build bedrock message: {e}"))
+    }
+
+    fn block_to_bedrock(b: &Block) -> Result<ContentBlock> {
+        Ok(match b {
+            Block::Text { text } => ContentBlock::Text(text.clone()),
+            Block::ToolUse { id, call } => {
+                let input = json_to_document(&call.input);
+                let block = ToolUseBlock::builder()
+                    .tool_use_id(id)
+                    .name(&call.name)
+                    .input(input)
+                    .build()
+                    .map_err(|e| anyhow!("build tool_use: {e}"))?;
+                ContentBlock::ToolUse(block)
+            }
+            Block::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } => {
+                let body = ToolResultContentBlock::Text(content.clone());
+                let status = if *is_error {
+                    ToolResultStatus::Error
+                } else {
+                    ToolResultStatus::Success
+                };
+                let block = ToolResultBlock::builder()
+                    .tool_use_id(tool_use_id)
+                    .content(body)
+                    .status(status)
+                    .build()
+                    .map_err(|e| anyhow!("build tool_result: {e}"))?;
+                ContentBlock::ToolResult(block)
+            }
+        })
+    }
+
+    fn tool_to_bedrock(tool: &Value) -> Result<Tool> {
+        let name = tool["name"]
+            .as_str()
+            .ok_or_else(|| anyhow!("tool missing name"))?;
+        let description = tool["description"].as_str().unwrap_or("").to_string();
+        let schema_json = tool
+            .get("input_schema")
+            .ok_or_else(|| anyhow!("tool {name} missing input_schema"))?;
+        let schema_doc = json_to_document(schema_json);
+        let spec = ToolSpecification::builder()
+            .name(name)
+            .description(description)
+            .input_schema(ToolInputSchema::Json(schema_doc))
+            .build()
+            .map_err(|e| anyhow!("build tool spec: {e}"))?;
+        Ok(Tool::ToolSpec(spec))
+    }
+
+    fn assistant_from_bedrock(msg: &BrMessage) -> Result<AssistantTurn> {
+        let mut text = String::new();
+        let mut calls: Vec<(String, ToolCall)> = Vec::new();
+        for block in msg.content() {
+            match block {
+                ContentBlock::Text(t) => {
+                    if !text.is_empty() {
+                        text.push('\n');
+                    }
+                    text.push_str(t);
+                }
+                ContentBlock::ToolUse(tu) => {
+                    let id = tu.tool_use_id().to_string();
+                    let name = tu.name().to_string();
+                    let input = document_to_json(tu.input());
+                    calls.push((id, ToolCall { name, input }));
+                }
+                _ => {
+                    // Other block types (image, document, reasoning…)
+                    // aren't part of bouncy's tool surface, so we
+                    // silently ignore them.
+                }
+            }
+        }
+        Ok(AssistantTurn { text, calls })
+    }
+
+    /// `serde_json::Value` ↔ AWS smithy `Document` conversion. The
+    /// Converse API uses Document for tool input and tool result
+    /// payloads; bouncy's harness uses serde_json everywhere else.
+    fn json_to_document(v: &Value) -> Document {
+        match v {
+            Value::Null => Document::Null,
+            Value::Bool(b) => Document::Bool(*b),
+            Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    Document::Number(aws_smithy_types::Number::NegInt(i))
+                } else if let Some(u) = n.as_u64() {
+                    Document::Number(aws_smithy_types::Number::PosInt(u))
+                } else if let Some(f) = n.as_f64() {
+                    Document::Number(aws_smithy_types::Number::Float(f))
+                } else {
+                    Document::Null
+                }
+            }
+            Value::String(s) => Document::String(s.clone()),
+            Value::Array(a) => Document::Array(a.iter().map(json_to_document).collect()),
+            Value::Object(o) => Document::Object(
+                o.iter()
+                    .map(|(k, v)| (k.clone(), json_to_document(v)))
+                    .collect(),
+            ),
+        }
+    }
+
+    fn document_to_json(d: &Document) -> Value {
+        match d {
+            Document::Null => Value::Null,
+            Document::Bool(b) => Value::Bool(*b),
+            Document::Number(n) => match n {
+                aws_smithy_types::Number::PosInt(u) => Value::Number((*u).into()),
+                aws_smithy_types::Number::NegInt(i) => Value::Number((*i).into()),
+                aws_smithy_types::Number::Float(f) => serde_json::Number::from_f64(*f)
+                    .map(Value::Number)
+                    .unwrap_or(Value::Null),
+            },
+            Document::String(s) => Value::String(s.clone()),
+            Document::Array(a) => Value::Array(a.iter().map(document_to_json).collect()),
+            Document::Object(o) => Value::Object(
+                o.iter()
+                    .map(|(k, v)| (k.clone(), document_to_json(v)))
+                    .collect(),
+            ),
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use serde_json::json;
+
+        #[test]
+        fn json_document_round_trip_preserves_structure() {
+            let v = json!({
+                "name": "click",
+                "input": {"index": 5, "selector": "#x", "flags": [true, false]}
+            });
+            let doc = json_to_document(&v);
+            let back = document_to_json(&doc);
+            assert_eq!(v, back);
+        }
+
+        #[test]
+        fn tool_to_bedrock_extracts_name_description_and_schema() {
+            let v = json!({
+                "name": "click",
+                "description": "click an element",
+                "input_schema": {"type": "object", "properties": {"selector": {"type": "string"}}}
+            });
+            let t = tool_to_bedrock(&v).unwrap();
+            match t {
+                Tool::ToolSpec(spec) => {
+                    assert_eq!(spec.name(), "click");
+                    assert_eq!(spec.description().unwrap_or(""), "click an element");
+                }
+                _ => panic!("expected ToolSpec"),
+            }
+        }
+    }
+}
+
+#[cfg(feature = "bedrock")]
+pub use bedrock::BedrockClient;

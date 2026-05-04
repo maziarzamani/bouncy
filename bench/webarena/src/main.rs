@@ -16,11 +16,11 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use bouncy_browse::BrowseOpts;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 
 use bouncy_bench_webarena::agent::{run_task, Trajectory};
 use bouncy_bench_webarena::judge::{Judge, SubstringJudge};
-use bouncy_bench_webarena::llm::AnthropicClient;
+use bouncy_bench_webarena::llm::{AnthropicClient, LlmClient};
 use bouncy_bench_webarena::task::Task;
 
 #[derive(Parser, Debug)]
@@ -34,23 +34,47 @@ struct Args {
     #[arg(long)]
     tasks: PathBuf,
 
-    /// Anthropic model id. Defaults to a recent Sonnet.
+    /// LLM backend. `anthropic` is the direct Messages API
+    /// (`ANTHROPIC_API_KEY`). `bedrock` is AWS Bedrock's Converse
+    /// API (standard AWS credential chain). Bedrock support
+    /// requires the `bedrock` cargo feature — build with
+    /// `--features bedrock` if you plan to use it.
+    #[arg(long, value_enum, default_value_t = Provider::Anthropic)]
+    provider: Provider,
+
+    /// Model id. For `anthropic`: a bare Anthropic id like
+    /// `claude-sonnet-4-6`. For `bedrock`: a Bedrock model id like
+    /// `anthropic.claude-sonnet-4-5-20250929-v1:0` or an inference
+    /// profile ARN. Defaults to the Anthropic Sonnet id; override
+    /// when targeting Bedrock.
     #[arg(long, default_value = "claude-sonnet-4-6")]
     model: String,
+
+    /// AWS region for `--provider bedrock`. Falls back to
+    /// `AWS_REGION` / `AWS_DEFAULT_REGION` env, then the SDK's
+    /// usual default chain.
+    #[arg(long)]
+    region: Option<String>,
 
     /// Stealth fingerprinting on the bouncy session.
     #[arg(long)]
     stealth: bool,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum Provider {
+    Anthropic,
+    Bedrock,
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
+    bouncy_bench_webarena::install_crypto_provider();
     let args = Args::parse();
     let raw = std::fs::read_to_string(&args.tasks)
         .with_context(|| format!("read tasks file {:?}", args.tasks))?;
     let tasks = parse_tasks(&raw)?;
-    let llm: Arc<dyn bouncy_bench_webarena::llm::LlmClient> =
-        Arc::new(AnthropicClient::from_env(&args.model)?);
+    let llm: Arc<dyn LlmClient> = build_client(&args).await?;
     let judge = SubstringJudge;
 
     let mut summary = Vec::with_capacity(tasks.len());
@@ -93,6 +117,30 @@ fn parse_tasks(raw: &str) -> Result<Vec<Task>> {
     } else {
         Ok(vec![serde_json::from_str(raw)?])
     }
+}
+
+/// Build an [`LlmClient`] for the chosen provider. Bedrock is
+/// behind the `bedrock` cargo feature so users who only need the
+/// Anthropic-direct path don't pay the AWS SDK's compile cost.
+async fn build_client(args: &Args) -> Result<Arc<dyn LlmClient>> {
+    match args.provider {
+        Provider::Anthropic => Ok(Arc::new(AnthropicClient::from_env(&args.model)?)),
+        Provider::Bedrock => bedrock_client(args).await,
+    }
+}
+
+#[cfg(feature = "bedrock")]
+async fn bedrock_client(args: &Args) -> Result<Arc<dyn LlmClient>> {
+    use bouncy_bench_webarena::llm::BedrockClient;
+    let client = BedrockClient::from_env(&args.model, args.region.clone()).await?;
+    Ok(Arc::new(client))
+}
+
+#[cfg(not(feature = "bedrock"))]
+async fn bedrock_client(_args: &Args) -> Result<Arc<dyn LlmClient>> {
+    Err(anyhow::anyhow!(
+        "this binary was built without the `bedrock` feature — rebuild with `--features bedrock` to use AWS Bedrock"
+    ))
 }
 
 fn print_summary(summary: &[(String, bool, u64, String)], tasks: &[Task]) {

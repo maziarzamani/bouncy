@@ -32,6 +32,7 @@ const DETAILS: &str = r#"<!doctype html>
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_clicks_details_link_then_reports_total_via_done() {
+    bouncy_bench_webarena::install_crypto_provider();
     let addr = spawn_router(vec![("/", LANDING), ("/details", DETAILS)]).await;
     let task = Task {
         id: "find_total".into(),
@@ -81,6 +82,7 @@ async fn agent_clicks_details_link_then_reports_total_via_done() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_terminates_on_max_steps_when_model_keeps_acting() {
+    bouncy_bench_webarena::install_crypto_provider();
     let addr = spawn_router(vec![("/", LANDING)]).await;
     let task = Task {
         id: "loop_forever".into(),
@@ -115,6 +117,7 @@ async fn agent_terminates_on_max_steps_when_model_keeps_acting() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_records_failed_tool_calls_without_aborting() {
+    bouncy_bench_webarena::install_crypto_provider();
     // The model first asks for a selector that doesn't exist,
     // then recovers and emits done. The trajectory should record
     // both steps; the judge should pass on the final answer.

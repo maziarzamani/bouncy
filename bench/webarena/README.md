@@ -17,11 +17,39 @@ Agent-loop harness for running **bouncy + Claude** through WebArena-shaped tasks
 
 ## Run it
 
+### Direct Anthropic API (default)
+
 ```bash
 ANTHROPIC_API_KEY=sk-ant-... cargo run -p bouncy-bench-webarena -- \
     --tasks tasks.json \
     --model claude-sonnet-4-6
 ```
+
+### AWS Bedrock
+
+Build with the `bedrock` feature, then point `--provider bedrock` at a
+Bedrock model id (or inference profile ARN). Auth is the standard AWS
+credential chain — env vars (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+`AWS_SESSION_TOKEN`), `~/.aws/credentials`, or an attached IAM role.
+
+```bash
+# Pre-flight: confirm the Anthropic Claude models are enabled in your
+# Bedrock account for the region you're targeting (Console → Bedrock →
+# Model access). Bedrock model ids look like
+#   anthropic.claude-sonnet-4-5-20250929-v1:0
+# Inference profile ARNs (us.anthropic.claude-sonnet-...) work too.
+
+cargo run -p bouncy-bench-webarena --features bedrock -- \
+    --tasks tasks.json \
+    --provider bedrock \
+    --model anthropic.claude-sonnet-4-5-20250929-v1:0 \
+    --region us-east-1
+```
+
+The `bedrock` feature is opt-in because it pulls in the AWS SDK
+(noticeable compile-time cost). Without it, the binary still
+builds — `--provider bedrock` then errors with a clear "rebuild with
+--features bedrock" message.
 
 `tasks.json` can be a single task or an array:
 

@@ -32,3 +32,29 @@ pub mod judge;
 pub mod llm;
 pub mod task;
 pub mod tools;
+
+/// Install rustls's `ring` crypto provider as the process-wide
+/// default. Idempotent — safe to call from `main`, from each test,
+/// or both.
+///
+/// Only meaningful when the `bedrock` feature is on. With that
+/// feature off, the dep graph contains a single crypto provider
+/// (ring, via hyper-rustls) and rustls auto-installs it. With
+/// bedrock on, the AWS SDK adds aws-lc-rs to the same graph; with
+/// two providers present rustls won't auto-pick one and the first
+/// HTTPS handshake panics. This helper closes the gap.
+#[cfg(feature = "bedrock")]
+pub fn install_crypto_provider() {
+    use std::sync::OnceLock;
+    static ONCE: OnceLock<()> = OnceLock::new();
+    ONCE.get_or_init(|| {
+        // First-call wins; later calls are silently a no-op even
+        // if the provider was installed by some other code path.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
+/// Stub when the `bedrock` feature is off — keeps callers
+/// platform-agnostic without `cfg`-gating each call site.
+#[cfg(not(feature = "bedrock"))]
+pub fn install_crypto_provider() {}
