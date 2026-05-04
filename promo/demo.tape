@@ -47,7 +47,7 @@ Sleep 3s
 Type "# browse — stateful session, click by visible text"
 Enter
 Sleep 500ms
-Type 'bouncy browse https://example.com --do "click_text More information"'
+Type 'bouncy browse https://example.com --do "click_text Learn more"'
 Enter
 Sleep 5s
 
