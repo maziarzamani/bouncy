@@ -256,6 +256,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "bouncy-bench-webarena"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bouncy-browse",
+ "bytes",
+ "clap",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "bouncy-browse"
 version = "0.1.9"
 dependencies = [

@@ -10,6 +10,10 @@ members = [
     "crates/bouncy-cdp",
     "crates/bouncy-mcp",
     "crates/bouncy-browse",
+    # Benchmark / leaderboard harnesses. Marked publish=false in their
+    # own Cargo.toml so they never ship to crates.io. Lives outside
+    # `crates/` so the release-please config doesn't track them.
+    "bench/webarena",
 ]
 
 [workspace.package]
