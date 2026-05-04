@@ -7,9 +7,9 @@
     "max_steps": 4
   },
   {
-    "id": "example_literature",
+    "id": "example_avoid_operations",
     "start_url": "https://example.com/",
-    "instruction": "Does this page say you can use the domain in literature without prior coordination? Answer 'yes' or 'no'.",
+    "instruction": "Does this page tell you to avoid using the domain in operations? Answer 'yes' or 'no'.",
     "expected": ["yes"],
     "max_steps": 4
   },
@@ -17,7 +17,7 @@
     "id": "example_link_text",
     "start_url": "https://example.com/",
     "instruction": "What is the visible text of the only link on the page? Return just the text, exactly as it appears.",
-    "expected": ["more information"],
+    "expected": ["learn more"],
     "max_steps": 4
   }
 ]

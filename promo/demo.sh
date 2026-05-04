@@ -43,9 +43,10 @@ note "scrape — static page, no V8 boot"
 cmd 'time bouncy fetch https://example.com --dump text'
 sleep 1
 
-# 2. Browse — click by visible text
+# 2. Browse — click by visible text. (example.com's link text changes
+# every few years — currently "Learn more" as of mid-2026.)
 note "browse — stateful session, click by visible text"
-cmd 'bouncy browse https://example.com --do "click_text More information"'
+cmd 'bouncy browse https://example.com --do "click_text Learn more"'
 sleep 1
 
 # 3. Indexed interactive elements
