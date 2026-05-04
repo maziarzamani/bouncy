@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bouncy_browse::{BrowseOpts, ReadMode};
+use bouncy_browse::{BrowseOpts, ChainStep, ChainStepOutput, ReadMode, Target};
 use bouncy_fetch::Fetcher;
 use bouncy_js::Runtime;
 use rmcp::handler::server::tool::ToolRouter;
@@ -10,10 +10,12 @@ use rmcp::model::{CallToolResult, Content, ServerCapabilities, ServerInfo};
 use rmcp::{tool, tool_handler, tool_router, ErrorData, ServerHandler};
 use url::Url;
 
-use crate::browse_store::{BrowseStore, StoreError, DEFAULT_REAPER_INTERVAL};
+use crate::browse_store::{BrowseStore, SecretMap, StoreError, DEFAULT_REAPER_INTERVAL};
 use crate::error::ToolError;
 use crate::glue;
 use crate::tools::*;
+
+const DEFAULT_WAIT_TIMEOUT_MS: u64 = 5_000;
 
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_MAX_BODY_BYTES: u64 = 1_048_576; // 1 MB
@@ -353,7 +355,7 @@ impl BouncyServer {
     // =================================================================
 
     #[tool(
-        description = "Open a stateful browse session at a URL. Returns a session_id and the initial page snapshot (forms / links / buttons / inputs / headings / meta / text_summary). Pass the session_id to bouncy_browse_click / fill / submit / goto / read / eval to drive the same V8 + cookie jar across steps. Sessions auto-expire after 15 min idle; explicit close via bouncy_browse_close. Cap of 20 concurrent sessions per server."
+        description = "Open a stateful browse session at a URL. Returns a session_id and the initial page snapshot (forms / links / buttons / inputs / headings / interactive / meta / text_summary). Each interactive element has a stable integer `index` you can pass back via `index:N` to fill / click / submit etc. instead of constructing a CSS selector. Pass the session_id to bouncy_browse_click / fill / submit / goto / read / eval / chain / click_text / select_option / press_key / wait_for / back / forward to drive the same V8 + cookie jar across steps. Optional `secrets` map masks sensitive values from the LLM: a fill value that exactly matches a key gets swapped for the real value before reaching the page. Sessions auto-expire after 15 min idle; explicit close via bouncy_browse_close. Cap of 20 concurrent sessions per server."
     )]
     async fn bouncy_browse_open(
         &self,
@@ -364,9 +366,10 @@ impl BouncyServer {
             stealth: input.stealth.unwrap_or(false),
             ..BrowseOpts::default()
         };
+        let secrets: Option<SecretMap> = input.secrets;
         let (session_id, snapshot) = self
             .browse_store
-            .open(&input.url, opts)
+            .open_with_secrets(&input.url, opts, secrets)
             .await
             .map_err(map_store_err)?;
         Self::ok(&BrowseOpenOutput {
@@ -376,7 +379,7 @@ impl BouncyServer {
     }
 
     #[tool(
-        description = "Fire a synthetic click on the matched element in an open browse session. Drains any location.href redirects the click triggers. Returns the new page snapshot."
+        description = "Fire a synthetic click on the matched element in an open browse session. Pass either `selector` (CSS) or `index` (integer from the current snapshot's `interactive` list). Drains any location.href redirects the click triggers. Returns the new page snapshot."
     )]
     async fn bouncy_browse_click(
         &self,
@@ -386,33 +389,36 @@ impl BouncyServer {
             .browse_store
             .touch(&input.session_id)
             .map_err(map_store_err)?;
+        let target = target_from_pair(input.selector.as_deref(), input.index)?;
         let snapshot = session
-            .click(&input.selector)
+            .click_target(target)
             .await
             .map_err(map_browse_err)?;
         Self::ok(&BrowseSnapshotOutput { snapshot })
     }
 
     #[tool(
-        description = "Set the value on a form field and dispatch synthetic input + change events (so JS validators on the page see the change). Returns the new page snapshot."
+        description = "Set the value on a form field and dispatch synthetic input + change events (so JS validators on the page see the change). Pass either `selector` or `index`. If the session was opened with a `secrets` map and `value` exactly equals one of the placeholder keys, the real secret is substituted before reaching the page. Returns the new page snapshot."
     )]
     async fn bouncy_browse_fill(
         &self,
         Parameters(input): Parameters<BrowseFillInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let session = self
+        let (session, secrets) = self
             .browse_store
-            .touch(&input.session_id)
+            .touch_with_secrets(&input.session_id)
             .map_err(map_store_err)?;
+        let target = target_from_pair(input.selector.as_deref(), input.index)?;
+        let value = crate::browse_store::BrowseStore::unmask(secrets.as_ref(), &input.value);
         let snapshot = session
-            .fill(&input.selector, &input.value)
+            .fill_target(target, value)
             .await
             .map_err(map_browse_err)?;
         Self::ok(&BrowseSnapshotOutput { snapshot })
     }
 
     #[tool(
-        description = "Submit the form matched by `selector` (or the form containing the matched submit button). Three branches: form has action attr → real HTTP POST/GET with urlencoded fields; no action → synthetic submit event for JS-only forms; button selector → climbs to enclosing form. Returns the new page snapshot."
+        description = "Submit the form matched by `selector` / `index` (or the form containing the matched submit button). Three branches: form has action attr → real HTTP POST/GET with urlencoded fields; no action → synthetic submit event for JS-only forms; button selector → climbs to enclosing form. Returns the new page snapshot."
     )]
     async fn bouncy_browse_submit(
         &self,
@@ -422,8 +428,9 @@ impl BouncyServer {
             .browse_store
             .touch(&input.session_id)
             .map_err(map_store_err)?;
+        let target = target_from_pair(input.selector.as_deref(), input.index)?;
         let snapshot = session
-            .submit(&input.selector)
+            .submit_target(target)
             .await
             .map_err(map_browse_err)?;
         Self::ok(&BrowseSnapshotOutput { snapshot })
@@ -445,7 +452,7 @@ impl BouncyServer {
     }
 
     #[tool(
-        description = "Read text / HTML / attribute values from every element matching `selector` in an open browse session. `mode` is \"text\" (default), \"html\", or \"attr:NAME\" for attribute extraction. Pure read; doesn't change page state, doesn't return a snapshot."
+        description = "Read text / HTML / attribute values from every element matching `selector` (or the element identified by `index`) in an open browse session. `mode` is \"text\" (default), \"html\", or \"attr:NAME\" for attribute extraction. Pure read; doesn't change page state, doesn't return a snapshot."
     )]
     async fn bouncy_browse_read(
         &self,
@@ -455,9 +462,10 @@ impl BouncyServer {
             .browse_store
             .touch(&input.session_id)
             .map_err(map_store_err)?;
+        let target = target_from_pair(input.selector.as_deref(), input.index)?;
         let mode = parse_read_mode(input.mode.as_deref())?;
         let matches = session
-            .read(&input.selector, mode)
+            .read_target(target, mode)
             .await
             .map_err(map_browse_err)?;
         Self::ok(&BrowseReadOutput { matches })
@@ -491,6 +499,251 @@ impl BouncyServer {
         let closed = self.browse_store.close(&input.session_id);
         Self::ok(&BrowseCloseOutput { closed })
     }
+
+    #[tool(
+        description = "Click the first link or button whose visible text matches. Trimmed + ASCII-case-insensitive; exact match preferred over substring. Useful when you don't have a clean selector but you can read the button label. Returns the new page snapshot."
+    )]
+    async fn bouncy_browse_click_text(
+        &self,
+        Parameters(input): Parameters<BrowseClickTextInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session = self
+            .browse_store
+            .touch(&input.session_id)
+            .map_err(map_store_err)?;
+        let snapshot = session
+            .click_text(&input.text)
+            .await
+            .map_err(map_browse_err)?;
+        Self::ok(&BrowseSnapshotOutput { snapshot })
+    }
+
+    #[tool(
+        description = "Set a <select>'s value. `value` matches against `option.value=` first, then falls back to the option's visible text. Dispatches input + change events. Pass either `selector` or `index` to target the <select>. Returns the new page snapshot."
+    )]
+    async fn bouncy_browse_select_option(
+        &self,
+        Parameters(input): Parameters<BrowseSelectOptionInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session = self
+            .browse_store
+            .touch(&input.session_id)
+            .map_err(map_store_err)?;
+        let target = target_from_input(&input.target)?;
+        let snapshot = session
+            .select_option(target, &input.value)
+            .await
+            .map_err(map_browse_err)?;
+        Self::ok(&BrowseSnapshotOutput { snapshot })
+    }
+
+    #[tool(
+        description = "Dispatch a single keyboard event on the matched element. `key` is either a single character or one of the named keys (Enter, Tab, Escape, Backspace, Delete, ArrowUp/Down/Left/Right). Use this for inputs that listen to keydown rather than input/change (search-as-you-type, hotkey menus). Returns the new page snapshot."
+    )]
+    async fn bouncy_browse_press_key(
+        &self,
+        Parameters(input): Parameters<BrowsePressKeyInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session = self
+            .browse_store
+            .touch(&input.session_id)
+            .map_err(map_store_err)?;
+        let target = target_from_input(&input.target)?;
+        let snapshot = session
+            .press_key(target, &input.key)
+            .await
+            .map_err(map_browse_err)?;
+        Self::ok(&BrowseSnapshotOutput { snapshot })
+    }
+
+    #[tool(
+        description = "Block until a CSS selector matches or visible body text contains the given substring. Pass exactly one of `selector` / `text`. Polls every ~50 ms until the condition holds or `timeout_ms` elapses (default 5000). Returns the snapshot once the condition holds; errors on timeout. Bouncy's DOM is mostly synchronous, so this matters most when scripts mutate the DOM after a click/fill."
+    )]
+    async fn bouncy_browse_wait_for(
+        &self,
+        Parameters(input): Parameters<BrowseWaitForInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session = self
+            .browse_store
+            .touch(&input.session_id)
+            .map_err(map_store_err)?;
+        let timeout = input.timeout_ms.unwrap_or(DEFAULT_WAIT_TIMEOUT_MS);
+        let snapshot = match (input.selector.as_deref(), input.text.as_deref()) {
+            (Some(sel), None) => session
+                .wait_for(sel, timeout)
+                .await
+                .map_err(map_browse_err)?,
+            (None, Some(needle)) => session
+                .wait_for_text(needle, timeout)
+                .await
+                .map_err(map_browse_err)?,
+            (Some(_), Some(_)) => {
+                return Err(ErrorData::invalid_params(
+                    "pass exactly one of `selector` or `text`, not both",
+                    None,
+                ))
+            }
+            (None, None) => {
+                return Err(ErrorData::invalid_params(
+                    "pass exactly one of `selector` or `text`",
+                    None,
+                ))
+            }
+        };
+        Self::ok(&BrowseSnapshotOutput { snapshot })
+    }
+
+    #[tool(
+        description = "Pause the session for the given number of milliseconds. Useful as a pacing knob between requests in a chain — bouncy's DOM is synchronous so this isn't a substitute for `wait_for`. Returns the snapshot taken after the pause."
+    )]
+    async fn bouncy_browse_wait(
+        &self,
+        Parameters(input): Parameters<BrowseWaitInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session = self
+            .browse_store
+            .touch(&input.session_id)
+            .map_err(map_store_err)?;
+        let snapshot = session.wait_ms(input.ms).await.map_err(map_browse_err)?;
+        Self::ok(&BrowseSnapshotOutput { snapshot })
+    }
+
+    #[tool(
+        description = "Re-navigate to the previously-visited URL in the same session. Errors when the back stack is empty. Implemented via a per-session URL stack — bouncy's V8 doesn't model real history.back() semantics."
+    )]
+    async fn bouncy_browse_back(
+        &self,
+        Parameters(input): Parameters<BrowseHistoryInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session = self
+            .browse_store
+            .touch(&input.session_id)
+            .map_err(map_store_err)?;
+        let snapshot = session.back().await.map_err(map_browse_err)?;
+        Self::ok(&BrowseSnapshotOutput { snapshot })
+    }
+
+    #[tool(
+        description = "Re-navigate to the URL most recently popped off the back stack. Errors when the forward stack is empty. The forward stack is cleared by any non-back/forward navigation, mirroring browser behavior."
+    )]
+    async fn bouncy_browse_forward(
+        &self,
+        Parameters(input): Parameters<BrowseHistoryInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session = self
+            .browse_store
+            .touch(&input.session_id)
+            .map_err(map_store_err)?;
+        let snapshot = session.forward().await.map_err(map_browse_err)?;
+        Self::ok(&BrowseSnapshotOutput { snapshot })
+    }
+
+    #[tool(
+        description = "Run a list of browse actions in one round trip. Each step is one of click / fill / submit / goto / read / eval / snapshot / press_key / select_option / click_text / wait_for / wait_for_text / wait / back / forward; the `action` field discriminates. The actor stops at the first error and returns whatever steps completed in `steps`, plus the final snapshot in `snapshot` for convenience. Inspired by browser-use's `max_actions_per_step` — lets the LLM batch a planned sequence (fill 3 fields, submit, read result) into one MCP round trip instead of N. Honors the session's `secrets` map for `fill` values."
+    )]
+    async fn bouncy_browse_chain(
+        &self,
+        Parameters(input): Parameters<BrowseChainInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let (session, secrets) = self
+            .browse_store
+            .touch_with_secrets(&input.session_id)
+            .map_err(map_store_err)?;
+        let mut converted: Vec<ChainStep> = Vec::with_capacity(input.steps.len());
+        for s in input.steps {
+            converted.push(chain_step_from_input(s, secrets.as_ref())?);
+        }
+        let outs = session.chain(converted).await.map_err(map_browse_err)?;
+        let snapshot = outs.iter().rev().find_map(|o| match o {
+            ChainStepOutput::Snapshot(s) => Some(s.clone()),
+            ChainStepOutput::Eval { snapshot, .. } => Some(snapshot.clone()),
+            ChainStepOutput::Reads(_) => None,
+        });
+        let steps: Vec<BrowseChainStepOutput> = outs
+            .into_iter()
+            .map(|o| match o {
+                ChainStepOutput::Snapshot(snapshot) => {
+                    BrowseChainStepOutput::Snapshot { snapshot }
+                }
+                ChainStepOutput::Reads(matches) => BrowseChainStepOutput::Reads { matches },
+                ChainStepOutput::Eval { result, snapshot } => {
+                    BrowseChainStepOutput::EvalResult { result, snapshot }
+                }
+            })
+            .collect();
+        Self::ok(&BrowseChainOutput { steps, snapshot })
+    }
+}
+
+/// Convert an MCP `selector` / `index` pair into a `Target`. Either
+/// can be set; if both, `index` wins. Erroring with `invalid_params`
+/// is friendlier than letting it slip through as a `NoMatch` later.
+fn target_from_pair(selector: Option<&str>, index: Option<u32>) -> Result<Target, ErrorData> {
+    if let Some(i) = index {
+        return Ok(Target::Index(i));
+    }
+    if let Some(sel) = selector {
+        if !sel.is_empty() {
+            return Ok(Target::selector(sel));
+        }
+    }
+    Err(ErrorData::invalid_params(
+        "pass either `selector` or `index`",
+        None,
+    ))
+}
+
+fn target_from_input(t: &TargetInput) -> Result<Target, ErrorData> {
+    target_from_pair(t.selector.as_deref(), t.index)
+}
+
+/// Convert an MCP `BrowseChainStepInput` into a library `ChainStep`,
+/// applying secret-substitution to `fill` values along the way.
+fn chain_step_from_input(
+    step: BrowseChainStepInput,
+    secrets: Option<&std::sync::Arc<SecretMap>>,
+) -> Result<ChainStep, ErrorData> {
+    Ok(match step {
+        BrowseChainStepInput::Click { target } => ChainStep::Click(target_from_input(&target)?),
+        BrowseChainStepInput::Fill { target, value } => {
+            let unmasked = crate::browse_store::BrowseStore::unmask(secrets, &value).to_string();
+            ChainStep::Fill {
+                target: target_from_input(&target)?,
+                value: unmasked,
+            }
+        }
+        BrowseChainStepInput::Submit { target } => ChainStep::Submit(target_from_input(&target)?),
+        BrowseChainStepInput::Goto { url } => ChainStep::Goto(url),
+        BrowseChainStepInput::Read { target, mode } => ChainStep::Read {
+            target: target_from_input(&target)?,
+            mode: parse_read_mode(mode.as_deref())?,
+        },
+        BrowseChainStepInput::Eval { expr } => ChainStep::Eval(expr),
+        BrowseChainStepInput::Snapshot => ChainStep::Snapshot,
+        BrowseChainStepInput::PressKey { target, key } => ChainStep::PressKey {
+            target: target_from_input(&target)?,
+            key,
+        },
+        BrowseChainStepInput::SelectOption { target, value } => ChainStep::SelectOption {
+            target: target_from_input(&target)?,
+            value,
+        },
+        BrowseChainStepInput::ClickText { text } => ChainStep::ClickText(text),
+        BrowseChainStepInput::WaitFor {
+            selector,
+            timeout_ms,
+        } => ChainStep::WaitFor {
+            selector,
+            timeout_ms: timeout_ms.unwrap_or(DEFAULT_WAIT_TIMEOUT_MS),
+        },
+        BrowseChainStepInput::WaitForText { text, timeout_ms } => ChainStep::WaitForText {
+            needle: text,
+            timeout_ms: timeout_ms.unwrap_or(DEFAULT_WAIT_TIMEOUT_MS),
+        },
+        BrowseChainStepInput::Wait { ms } => ChainStep::Wait { ms },
+        BrowseChainStepInput::Back => ChainStep::Back,
+        BrowseChainStepInput::Forward => ChainStep::Forward,
+    })
 }
 
 /// Convert a `bouncy_browse` mode string (`"text"` / `"html"` /
@@ -545,10 +798,14 @@ impl ServerHandler for BouncyServer {
              Stateless tools: fetch (raw HTTP), extract_title / extract_text / extract_links \
              (static HTML), js_eval (V8), scrape (one URL, auto JS-vs-static + retries), \
              scrape_many (URL list). Stateful browse session tools: \
-             bouncy_browse_open returns a session_id + initial page snapshot; \
-             then drive the same session with bouncy_browse_click / fill / submit / \
-             goto / read / eval (each returns the new snapshot). bouncy_browse_close \
-             frees a session early; idle sessions auto-expire after 15 min."
+             bouncy_browse_open returns a session_id + initial page snapshot \
+             (each interactive element has a stable `index` you can reuse). \
+             Drive the session with bouncy_browse_click / fill / submit / read \
+             (selector OR index) / goto / eval / click_text / select_option / \
+             press_key / wait_for / wait / back / forward / chain. \
+             bouncy_browse_chain batches multiple steps in one round trip. \
+             Optional `secrets` map on open masks sensitive fill values from the LLM. \
+             bouncy_browse_close frees a session early; idle sessions auto-expire after 15 min."
                 .into(),
         );
         info

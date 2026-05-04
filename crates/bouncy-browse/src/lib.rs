@@ -20,8 +20,11 @@
 pub mod session;
 pub mod snapshot;
 
-pub use session::{BrowseError, BrowseOpts, BrowseSession, EvalResult, ReadMode};
+pub use session::{
+    BrowseError, BrowseOpts, BrowseSession, ChainStep, ChainStepOutput, EvalResult, ReadMode,
+    Target,
+};
 pub use snapshot::{
-    unique_selector, ButtonSnapshot, FormSnapshot, HeadingSnapshot, InputSnapshot, LinkSnapshot,
-    PageSnapshot, SnapshotOpts,
+    unique_selector, ButtonSnapshot, FormSnapshot, HeadingSnapshot, InputSnapshot,
+    InteractiveElement, LinkSnapshot, PageSnapshot, SelectOption, SnapshotOpts,
 };

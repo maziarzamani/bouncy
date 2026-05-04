@@ -32,6 +32,16 @@ pub struct PageSnapshot {
     pub inputs: Vec<InputSnapshot>,
     pub headings: Vec<HeadingSnapshot>,
 
+    /// Flat, indexed view of every interactive element on the page —
+    /// forms, form fields, links, buttons, stray inputs. Each entry
+    /// has a stable `index` (unique within this snapshot) the LLM can
+    /// pass back to `click_index` / `fill_index` / `submit_index` /
+    /// `read_index` instead of constructing a CSS selector. Indexing
+    /// is contiguous from 0 in document-walk order across all the
+    /// other lists, so the same `index` referenced from `forms[i]` /
+    /// `links[i]` / etc. resolves to the same DOM element here.
+    pub interactive: Vec<InteractiveElement>,
+
     /// Truncated visible text of the page body. Capped per [`SnapshotOpts`];
     /// when truncated, ends in [`TRUNCATION_MARKER`] so the LLM knows.
     pub text_summary: String,
@@ -41,8 +51,33 @@ pub struct PageSnapshot {
     pub meta: BTreeMap<String, String>,
 }
 
+/// One actionable element in the flat [`PageSnapshot::interactive`]
+/// list. The `index` is the LLM-friendly handle to this element —
+/// stable inside a single snapshot, shared with the per-category
+/// (`forms` / `links` / etc.) lists.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct InteractiveElement {
+    pub index: u32,
+    /// `"form"` | `"field"` | `"link"` | `"button"`.
+    pub kind: String,
+    pub selector: String,
+    /// Best-effort human label: link text, button text, field
+    /// label/name/placeholder, form action attribute, etc. Always
+    /// trimmed; never longer than [`InteractiveElement::LABEL_CAP`].
+    pub label: String,
+}
+
+impl InteractiveElement {
+    /// Cap on the inline label so a noisy page doesn't bloat the
+    /// flat list. Labels longer than this are truncated with " […]".
+    pub const LABEL_CAP: usize = 120;
+}
+
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct FormSnapshot {
+    /// Stable index inside this snapshot — same value the matching
+    /// entry has in [`PageSnapshot::interactive`].
+    pub index: u32,
     pub selector: String,
     pub action: Option<String>,
     /// Uppercased: `"GET"` / `"POST"`. Defaults to `"GET"` when the
@@ -53,6 +88,7 @@ pub struct FormSnapshot {
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct InputSnapshot {
+    pub index: u32,
     pub selector: String,
     /// `<input type=…>` for inputs, `"textarea"` for textareas,
     /// `"select"` for selects.
@@ -63,10 +99,26 @@ pub struct InputSnapshot {
     pub value: Option<String>,
     pub placeholder: Option<String>,
     pub required: bool,
+    /// For `<select>` only: the available `<option>` entries. Empty
+    /// for non-select kinds. Lets the LLM pick a value without an
+    /// extra round trip via `read`.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub options: Vec<SelectOption>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct SelectOption {
+    /// Submission value — the `value=` attribute, or text when absent.
+    pub value: String,
+    /// Visible text of the `<option>`.
+    pub text: String,
+    /// `selected` attribute is present.
+    pub selected: bool,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct LinkSnapshot {
+    pub index: u32,
     pub selector: String,
     pub text: String,
     /// Resolved absolute URL when the page URL is parseable; otherwise
@@ -76,6 +128,7 @@ pub struct LinkSnapshot {
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct ButtonSnapshot {
+    pub index: u32,
     pub selector: String,
     pub text: String,
     /// `"submit"` (default for `<button>` inside a form), `"button"`,
@@ -116,6 +169,8 @@ impl PageSnapshot {
 
         let meta = collect_meta(doc);
 
+        let mut indexer = Indexer::default();
+
         // Forms first — collect form field NodeIds so we can later filter them
         // out of the top-level "stray inputs" list.
         let form_ids = doc.query_selector_all("form");
@@ -123,16 +178,31 @@ impl PageSnapshot {
         let forms: Vec<FormSnapshot> = form_ids
             .iter()
             .map(|&fid| {
-                let fields = collect_form_fields(doc, fid);
-                form_field_ids.extend(fields.iter().map(|(nid, _)| *nid));
+                let form_index = indexer.next();
+                let fields_with_ids = collect_form_fields(doc, fid, &mut indexer);
+                form_field_ids.extend(fields_with_ids.iter().map(|(nid, _)| *nid));
+                let fields: Vec<InputSnapshot> = fields_with_ids
+                    .into_iter()
+                    .map(|(_, snap)| snap)
+                    .collect();
+                let selector = unique_selector(doc, fid);
+                let action = doc.get_attribute(fid, "action");
+                let method = doc
+                    .get_attribute(fid, "method")
+                    .map(|m| m.to_uppercase())
+                    .unwrap_or_else(|| "GET".to_string());
+                indexer.push(InteractiveElement {
+                    index: form_index,
+                    kind: "form".into(),
+                    selector: selector.clone(),
+                    label: form_label(action.as_deref(), &method),
+                });
                 FormSnapshot {
-                    selector: unique_selector(doc, fid),
-                    action: doc.get_attribute(fid, "action"),
-                    method: doc
-                        .get_attribute(fid, "method")
-                        .map(|m| m.to_uppercase())
-                        .unwrap_or_else(|| "GET".to_string()),
-                    fields: fields.into_iter().map(|(_, snap)| snap).collect(),
+                    index: form_index,
+                    selector,
+                    action,
+                    method,
+                    fields,
                 }
             })
             .collect();
@@ -143,7 +213,7 @@ impl PageSnapshot {
             .iter()
             .flat_map(|tag| doc.query_selector_all(tag))
             .filter(|nid| !form_field_ids.contains(nid))
-            .map(|nid| input_snapshot(doc, nid))
+            .map(|nid| input_snapshot(doc, nid, &mut indexer))
             .collect();
 
         let links: Vec<LinkSnapshot> = doc
@@ -151,9 +221,19 @@ impl PageSnapshot {
             .into_iter()
             .filter_map(|nid| {
                 let href = doc.get_attribute(nid, "href")?;
+                let idx = indexer.next();
+                let selector = unique_selector(doc, nid);
+                let text = doc.text_content(nid).trim().to_string();
+                indexer.push(InteractiveElement {
+                    index: idx,
+                    kind: "link".into(),
+                    selector: selector.clone(),
+                    label: cap_label(if text.is_empty() { &href } else { &text }),
+                });
                 Some(LinkSnapshot {
-                    selector: unique_selector(doc, nid),
-                    text: doc.text_content(nid).trim().to_string(),
+                    index: idx,
+                    selector,
+                    text,
                     href: resolve_href(url, &href),
                 })
             })
@@ -162,12 +242,25 @@ impl PageSnapshot {
         let buttons: Vec<ButtonSnapshot> = doc
             .query_selector_all("button")
             .into_iter()
-            .map(|nid| ButtonSnapshot {
-                selector: unique_selector(doc, nid),
-                text: doc.text_content(nid).trim().to_string(),
-                kind: doc
+            .map(|nid| {
+                let idx = indexer.next();
+                let selector = unique_selector(doc, nid);
+                let text = doc.text_content(nid).trim().to_string();
+                let kind = doc
                     .get_attribute(nid, "type")
-                    .unwrap_or_else(|| "submit".to_string()),
+                    .unwrap_or_else(|| "submit".to_string());
+                indexer.push(InteractiveElement {
+                    index: idx,
+                    kind: "button".into(),
+                    selector: selector.clone(),
+                    label: cap_label(&text),
+                });
+                ButtonSnapshot {
+                    index: idx,
+                    selector,
+                    text,
+                    kind,
+                }
             })
             .collect();
 
@@ -189,23 +282,62 @@ impl PageSnapshot {
             buttons,
             inputs,
             headings,
+            interactive: indexer.into_list(),
             text_summary,
             meta,
         }
     }
+
+    /// Look up an interactive element by its [`InteractiveElement::index`]
+    /// and return its CSS selector. `None` if the index isn't present.
+    pub fn selector_for_index(&self, index: u32) -> Option<&str> {
+        self.interactive
+            .iter()
+            .find(|e| e.index == index)
+            .map(|e| e.selector.as_str())
+    }
 }
 
-fn collect_form_fields(doc: &Document, form_id: NodeId) -> Vec<(NodeId, InputSnapshot)> {
+/// Tiny incrementing counter that hands out element indices and
+/// records each as an [`InteractiveElement`] for the flat list. Local
+/// to one snapshot build.
+#[derive(Default)]
+struct Indexer {
+    next: u32,
+    list: Vec<InteractiveElement>,
+}
+
+impl Indexer {
+    fn next(&mut self) -> u32 {
+        let n = self.next;
+        self.next += 1;
+        n
+    }
+
+    fn push(&mut self, e: InteractiveElement) {
+        self.list.push(e);
+    }
+
+    fn into_list(self) -> Vec<InteractiveElement> {
+        self.list
+    }
+}
+
+fn collect_form_fields(
+    doc: &Document,
+    form_id: NodeId,
+    indexer: &mut Indexer,
+) -> Vec<(NodeId, InputSnapshot)> {
     let mut out = Vec::new();
     for tag in ["input", "textarea", "select"] {
         for nid in doc.query_selector_all_within(form_id, tag) {
-            out.push((nid, input_snapshot(doc, nid)));
+            out.push((nid, input_snapshot(doc, nid, indexer)));
         }
     }
     out
 }
 
-fn input_snapshot(doc: &Document, nid: NodeId) -> InputSnapshot {
+fn input_snapshot(doc: &Document, nid: NodeId, indexer: &mut Indexer) -> InputSnapshot {
     let tag = doc.tag_name(nid).unwrap_or_default().to_ascii_lowercase();
     let kind = match tag.as_str() {
         "input" => doc
@@ -214,15 +346,78 @@ fn input_snapshot(doc: &Document, nid: NodeId) -> InputSnapshot {
             .to_ascii_lowercase(),
         other => other.to_string(),
     };
+    let selector = unique_selector(doc, nid);
+    let label = find_label(doc, nid);
+    let name = doc.get_attribute(nid, "name");
+    let placeholder = doc.get_attribute(nid, "placeholder");
+    let value = doc.get_attribute(nid, "value");
+    let required = doc.get_attribute(nid, "required").is_some();
+    let options = if tag == "select" {
+        collect_select_options(doc, nid)
+    } else {
+        Vec::new()
+    };
+    let idx = indexer.next();
+    let interactive_label = label
+        .clone()
+        .or_else(|| placeholder.clone())
+        .or_else(|| name.clone())
+        .unwrap_or_else(|| kind.clone());
+    indexer.push(InteractiveElement {
+        index: idx,
+        kind: "field".into(),
+        selector: selector.clone(),
+        label: cap_label(&interactive_label),
+    });
     InputSnapshot {
-        selector: unique_selector(doc, nid),
+        index: idx,
+        selector,
         kind,
-        name: doc.get_attribute(nid, "name"),
-        label: find_label(doc, nid),
-        value: doc.get_attribute(nid, "value"),
-        placeholder: doc.get_attribute(nid, "placeholder"),
-        required: doc.get_attribute(nid, "required").is_some(),
+        name,
+        label,
+        value,
+        placeholder,
+        required,
+        options,
     }
+}
+
+fn collect_select_options(doc: &Document, select_id: NodeId) -> Vec<SelectOption> {
+    doc.query_selector_all_within(select_id, "option")
+        .into_iter()
+        .map(|nid| {
+            let text = doc.text_content(nid).trim().to_string();
+            let value = doc.get_attribute(nid, "value").unwrap_or_else(|| text.clone());
+            let selected = doc.get_attribute(nid, "selected").is_some();
+            SelectOption {
+                value,
+                text,
+                selected,
+            }
+        })
+        .collect()
+}
+
+fn form_label(action: Option<&str>, method: &str) -> String {
+    match action {
+        Some(a) if !a.is_empty() => cap_label(&format!("{method} {a}")),
+        _ => format!("{method} <no action>"),
+    }
+}
+
+fn cap_label(s: &str) -> String {
+    let trimmed = s.trim();
+    if trimmed.len() <= InteractiveElement::LABEL_CAP {
+        return trimmed.to_string();
+    }
+    let mut end = InteractiveElement::LABEL_CAP.saturating_sub(TRUNCATION_MARKER.len());
+    while !trimmed.is_char_boundary(end) && end > 0 {
+        end -= 1;
+    }
+    let mut out = String::with_capacity(end + TRUNCATION_MARKER.len());
+    out.push_str(&trimmed[..end]);
+    out.push_str(TRUNCATION_MARKER);
+    out
 }
 
 /// Find the `<label>` text associated with `nid`. Two cases per HTML spec:
@@ -746,5 +941,121 @@ mod tests {
             "got: {:?}",
             field.label
         );
+    }
+
+    // ---- interactive indexing ----
+
+    #[test]
+    fn interactive_indices_are_unique_and_match_per_category() {
+        let doc = parse(
+            r#"<html><body>
+                <form id="login" action="/auth">
+                  <input name="u">
+                  <button type="submit">Go</button>
+                </form>
+                <a href="/about">About</a>
+                <input name="loose">
+            </body></html>"#,
+        );
+        let snap = PageSnapshot::from_document(&doc, "https://x.test/", SnapshotOpts::default());
+        // Every interactive element gets a unique index.
+        let mut seen = std::collections::HashSet::new();
+        for e in &snap.interactive {
+            assert!(seen.insert(e.index), "duplicate index {}", e.index);
+        }
+        // Indices used in per-category lists appear in the flat list.
+        let form_idx = snap.forms[0].index;
+        let field_idx = snap.forms[0].fields[0].index;
+        let link_idx = snap.links[0].index;
+        let stray_idx = snap.inputs[0].index;
+        for idx in [form_idx, field_idx, link_idx, stray_idx] {
+            assert!(seen.contains(&idx), "index {idx} missing from interactive");
+        }
+        // selector_for_index resolves to the same selector in the
+        // structured view.
+        let form_sel = snap.forms[0].selector.clone();
+        assert_eq!(snap.selector_for_index(form_idx), Some(form_sel.as_str()));
+    }
+
+    #[test]
+    fn interactive_kinds_are_categorized_correctly() {
+        let doc = parse(
+            r#"<html><body>
+                <form action="/x"><input name="u"></form>
+                <a href="/y">Y</a>
+                <button>Z</button>
+            </body></html>"#,
+        );
+        let snap = PageSnapshot::from_document(&doc, "https://x.test/", SnapshotOpts::default());
+        let kinds: Vec<&str> = snap.interactive.iter().map(|e| e.kind.as_str()).collect();
+        assert!(kinds.contains(&"form"));
+        assert!(kinds.contains(&"field"));
+        assert!(kinds.contains(&"link"));
+        assert!(kinds.contains(&"button"));
+    }
+
+    #[test]
+    fn interactive_label_falls_back_through_label_placeholder_name_kind() {
+        let doc = parse(
+            r#"<html><body>
+                <form action="/x">
+                  <input placeholder="Email" name="email">
+                  <input name="just_a_name">
+                  <input>
+                </form>
+            </body></html>"#,
+        );
+        let snap = PageSnapshot::from_document(&doc, "https://x.test/", SnapshotOpts::default());
+        // Map field index -> label that ended up in interactive.
+        let labels: std::collections::HashMap<u32, &str> = snap
+            .interactive
+            .iter()
+            .filter(|e| e.kind == "field")
+            .map(|e| (e.index, e.label.as_str()))
+            .collect();
+        // First field: placeholder wins over name when no <label>.
+        assert_eq!(labels[&snap.forms[0].fields[0].index], "Email");
+        assert_eq!(labels[&snap.forms[0].fields[1].index], "just_a_name");
+        // Last field: nothing → falls back to kind ("text").
+        assert_eq!(labels[&snap.forms[0].fields[2].index], "text");
+    }
+
+    #[test]
+    fn select_options_are_collected_with_value_text_and_selected_flag() {
+        let doc = parse(
+            r#"<html><body>
+                <form action="/x">
+                  <select name="topic">
+                    <option value="a">Apples</option>
+                    <option value="b" selected>Bananas</option>
+                    <option>Cherries</option>
+                  </select>
+                </form>
+            </body></html>"#,
+        );
+        let snap = PageSnapshot::from_document(&doc, "https://x.test/", SnapshotOpts::default());
+        let select = &snap.forms[0].fields[0];
+        assert_eq!(select.kind, "select");
+        assert_eq!(select.options.len(), 3);
+        assert_eq!(select.options[0].value, "a");
+        assert_eq!(select.options[0].text, "Apples");
+        assert!(!select.options[0].selected);
+        assert!(select.options[1].selected);
+        // Option with no value= falls back to text content.
+        assert_eq!(select.options[2].value, "Cherries");
+    }
+
+    #[test]
+    fn cap_label_truncates_long_text() {
+        let long = "a".repeat(InteractiveElement::LABEL_CAP + 50);
+        let out = cap_label(&long);
+        assert!(out.len() <= InteractiveElement::LABEL_CAP);
+        assert!(out.ends_with(TRUNCATION_MARKER));
+    }
+
+    #[test]
+    fn cap_label_passes_short_text_through() {
+        assert_eq!(cap_label("Sign in"), "Sign in");
+        assert_eq!(cap_label("  spaces  "), "spaces");
     }
 }
