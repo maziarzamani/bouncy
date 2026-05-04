@@ -243,6 +243,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bouncy"
+version = "0.1.8"
+dependencies = [
+ "bouncy-browse",
+ "bouncy-dom",
+ "bouncy-extract",
+ "bouncy-fetch",
+ "bouncy-js",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "bouncy-browse"
 version = "0.1.8"
 dependencies = [

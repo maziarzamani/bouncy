@@ -102,23 +102,30 @@ The default build pulls a prebuilt V8 binary on first run (~30 s, no from-source
 
 ## Use as a library
 
-Every internal crate is published, so you can grab just the bits you need from another Rust project:
+The single entry point most users want is the umbrella `bouncy` crate. It re-exports the workspace pieces under feature flags so you don't have to pick the right sub-crate up front:
 
 ```toml
 [dependencies]
-bouncy-fetch   = "0.1"   # HTTP client (hyper + rustls, no reqwest overhead)
-bouncy-extract = "0.1"   # streaming HTML title / text / link extractor
-bouncy-js      = "0.1"   # embedded V8 + DOM bridge
-bouncy-cdp     = "0.1"   # Chrome DevTools Protocol server
-bouncy-dom     = "0.1"   # spec-compliant HTML5 DOM tree
-bouncy-browse  = "0.1"   # stateful browser session: open / click / fill / read with structured snapshots
+bouncy = "0.1"                                   # static scrape (fetch + extract)
+bouncy = { version = "0.1", features = ["browse"] } # add the V8-backed browser
+bouncy = { version = "0.1", features = ["full"] }   # everything
 ```
+
+| Module             | Feature   | What's in it |
+|--------------------|-----------|---|
+| `bouncy::fetch`    | `fetch`   | `Fetcher`, `FetchRequest`, `Response`, `CookieJar` (HTTP client, hyper + rustls) |
+| `bouncy::extract`  | `extract` | `extract_title`, `extract_text`, `extract_links` (streaming) |
+| `bouncy::browse`   | `browse`  | `BrowseSession`, `PageSnapshot`, click / fill / submit / read |
+| `bouncy::dom`      | `dom`     | `Document`, `NodeId` (spec-compliant HTML5 tree) |
+| `bouncy::js`       | `js`      | `Runtime` (raw V8 with bouncy's bootstrap) |
+
+Default features: `fetch` + `extract`. The `browse` / `js` features pull in V8 (~25 MB to the dep tree), so they're opt-in.
 
 Tiny example — fetch a page and pull its title:
 
 ```rust
-use bouncy_fetch::Fetcher;
-use bouncy_extract::extract_title;
+use bouncy::fetch::Fetcher;
+use bouncy::extract::extract_title;
 
 let fetcher = Fetcher::new()?;
 let resp = fetcher.get("https://example.com").await?;
@@ -129,7 +136,7 @@ println!("{:?}", title);   // Some("Example Domain")
 Or drive a stateful browse session — cookies, V8, DOM all persist across steps:
 
 ```rust
-use bouncy_browse::{BrowseSession, BrowseOpts, ReadMode};
+use bouncy::browse::{BrowseSession, BrowseOpts, ReadMode};
 
 let (session, snap) =
     BrowseSession::open("https://help.com", BrowseOpts::default()).await?;
@@ -151,6 +158,8 @@ the form has an `action` attribute (real HTTP `POST` / `GET` from the
 field values), the form is JS-only (a `submit` event fires and the
 page's handler runs), or the selector hits a submit `<button>` rather
 than the `<form>` itself (it climbs to the enclosing form).
+
+If you'd rather depend on the individual crates directly (smaller dep tree per crate, no feature wrangling), they're all published: `bouncy-fetch`, `bouncy-extract`, `bouncy-js`, `bouncy-cdp`, `bouncy-dom`, `bouncy-browse`.
 
 ## Quick Start
 

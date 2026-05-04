@@ -19,8 +19,13 @@
     { "type": "test",    "section": "Tests", "hidden": true  }
   ],
   "packages": {
-    "crates/bouncy-cli": {
+    "crates/bouncy": {
       "package-name": "bouncy"
+    },
+    "crates/bouncy-cli": {
+      "package-name": "bouncy-cli",
+      "skip-github-release": true,
+      "skip-github-pull-request": true
     },
     "crates/bouncy-mcp": {
       "package-name": "bouncy-mcp",
@@ -51,6 +56,11 @@
       "package-name": "bouncy-cdp",
       "skip-github-release": true,
       "skip-github-pull-request": true
+    },
+    "crates/bouncy-browse": {
+      "package-name": "bouncy-browse",
+      "skip-github-release": true,
+      "skip-github-pull-request": true
     }
   },
   "plugins": [
@@ -62,7 +72,7 @@
     {
       "type": "linked-versions",
       "groupName": "bouncy",
-      "components": ["bouncy", "bouncy-mcp", "bouncy-fetch", "bouncy-extract", "bouncy-js", "bouncy-dom", "bouncy-cdp"]
+      "components": ["bouncy", "bouncy-cli", "bouncy-mcp", "bouncy-fetch", "bouncy-extract", "bouncy-js", "bouncy-dom", "bouncy-cdp", "bouncy-browse"]
     }
   ]
 }
