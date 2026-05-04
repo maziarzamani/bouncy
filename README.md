@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <strong>Tiny Rust headless browser for scraping.</strong>
+  <strong>Tiny Rust headless browser. Scrape pages or drive multi-step browse sessions — from a CLI, from a library, or autonomously from Claude (MCP).</strong>
 </p>
 
 <p align="center">
@@ -19,7 +19,13 @@
 
 ---
 
-bouncy is a web scraper. Tiny, fast, ships as a single binary — no Node, no Chrome, no Python to install. Point it at a URL and get back the HTML, the visible text, or every link on the page. If the page only renders properly with JavaScript, bouncy will run the JavaScript too. Use it from the command line like curl, or drop it in as a Playwright backend.
+bouncy started as a web scraper and grew into a tiny full-on browser. Single binary, no Node, no Chrome, no Python to install. Three things it does well:
+
+- **Scrape** — `bouncy fetch` / `bouncy scrape` for one URL or a parallel batch. Get back HTML, visible text, links, CSS-selector matches. Runs JavaScript only when the page actually needs it (lazy V8).
+- **Browse** — `bouncy browse` opens a stateful session that holds V8 + cookies + DOM across `click` / `fill` / `submit` / `goto` / `read` / `eval` steps. Scriptable as a one-liner chain or interactive as a REPL.
+- **Drive autonomously** — `bouncy-mcp` exposes the same browse primitives as MCP tools, so Claude Desktop / Cursor / Claude Code can open a page, find a form, fill it, submit it, and read the result without any code from you. Same shape as [browser-use](https://github.com/browser-use/browser-use), without the Chromium dependency.
+
+Plus drop-in modes: use it from the shell like curl, or run `bouncy serve` as a Chrome DevTools Protocol backend that Playwright / puppeteer-core can connect to.
 
 ## Features
 
@@ -33,7 +39,7 @@ bouncy is a web scraper. Tiny, fast, ships as a single binary — no Node, no Ch
 - **Per-host rate limiting** — `bouncy scrape <urls> --per-host-concurrency 2` caps any single origin to N in-flight requests. Avoids hammering one server when scraping a list that hits the same host repeatedly.
 - **Configurable User-Agent** — `--user-agent` on `fetch` / `scrape`, with a sensible default of `bouncy/<version> (+repo URL)` so site operators can identify and reach you.
 - **Live TUI dashboard** — `bouncy scrape <urls> --tui` swaps the JSON summary for a live ratatui UI: per-URL status grid, throughput, p50/p95 latency, status histogram. Off by default; opt-in flag.
-- **Stateful browse sessions (library, in progress)** — `bouncy-browse` crate ships `BrowseSession` with `open` / `click` / `fill` / `submit` / `goto` / `read` / `eval` and structured page snapshots (forms, links, buttons, headings, meta). `submit` handles real HTTP form submission (POST + GET) and JS-only forms transparently. Foundation for an upcoming `bouncy browse` CLI subcommand and `bouncy_browse_*` MCP tools that let LLMs drive multi-step browsing flows autonomously.
+- **Stateful browse sessions** — `bouncy browse <url>` opens a held-open session (V8 + cookies + DOM persist) and runs `click` / `fill` / `submit` / `goto` / `read` / `eval` steps as a `--do` chain or an interactive REPL. The same primitives are exposed as `bouncy_browse_*` MCP tools so Claude can drive flows end-to-end. `submit` handles real HTTP form submission (POST + GET) and JS-only forms transparently. The library API lives in `bouncy::browse` (or `bouncy-browse` directly).
 - **Cross-platform binaries** — Linux x86_64, macOS Apple Silicon, Windows x86_64.
 
 ## See it
@@ -43,6 +49,8 @@ bouncy is a web scraper. Tiny, fast, ships as a single binary — no Node, no Ch
 `bouncy scrape urls.txt --concurrency 50 --tui` — live status grid for every URL, throughput rate, p50/p95/max latency, response-code histogram. Updates at 10 Hz. Falls through to the classic JSON / text output when `--tui` isn't set, so scripts piping to `jq` keep working.
 
 ## Why bouncy
+
+### vs Playwright (and headless Chromium in general)
 
 | | bouncy | Playwright |
 |---|---|---|
@@ -54,7 +62,24 @@ bouncy is a web scraper. Tiny, fast, ships as a single binary — no Node, no Ch
 | Stealth mode | built-in (canvas / audio / WebGPU / battery randomization) | needs plugin |
 | Runtime needed | none | Node + Chromium |
 
-If you need a real browser (screenshots, true layout-dependent behaviour, full WebGL), use Playwright. bouncy is the right tool when the page renders correctly *enough* with a DOM + JS but no compositor — which is most scraping flows.
+If you need a real browser (screenshots, true layout-dependent behaviour, full WebGL), use Playwright. bouncy is the right tool when the page renders correctly *enough* with a DOM + JS but no compositor, which covers most scraping flows.
+
+### vs browser-use (and other LLM-driven browser frameworks)
+
+[browser-use](https://github.com/browser-use/browser-use) pioneered the "LLM drives a browser" pattern: open a page, hand the model a structured snapshot, let it pick the next click / fill / submit. bouncy implements the same shape natively in Rust, with first-class MCP and no Chromium underneath.
+
+| | bouncy | browser-use |
+|---|---|---|
+| Engine | pure Rust DOM + V8 | Chromium via Playwright |
+| Install | one ~40 MB binary | Python + Node + Chromium (~300 MB) |
+| Cold start | ~30 ms | ~1.5 s (Playwright launch) |
+| RAM per page | ~20 MB | 200+ MB |
+| MCP-native | yes — `bouncy_browse_*` tools ship in `bouncy-mcp` | wrapper required |
+| Real layout / paint / WebGL | no | yes |
+| Visual screenshots | no | yes |
+| Anti-bot fingerprints | built-in stealth (canvas / audio / WebGPU / WebGL / fonts) | with plugins |
+
+When to reach for browser-use instead: pages that hard-require pixel-accurate layout, canvas/WebGL rendering, or visual screenshots for the model to reason about. When to reach for bouncy: form-driven flows, table extraction, login walls, multi-step navigation — the common 80% — where you want one binary, no Chromium, and the lowest-latency MCP loop.
 
 ## Install
 

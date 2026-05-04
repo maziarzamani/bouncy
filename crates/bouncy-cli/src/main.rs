@@ -1,10 +1,16 @@
-//! `bouncy` — single-binary scraping CLI.
+//! `bouncy` — single-binary headless browser CLI.
 //!
-//! `fetch` / `scrape` flag surface, plus a CDP server for Playwright
-//! clients. Static pages use the lol-html / hyper-rustls path directly;
-//! JavaScript only boots when `--eval` or `--selector` is given (lazy V8
-//! init), so static workloads pay no V8 tax even though the binary ships
-//! V8.
+//! Three subcommand families share one binary:
+//!   - `fetch` / `scrape` — static or batched HTML extraction. Static
+//!     pages take the lol-html / hyper-rustls path directly; JavaScript
+//!     only boots when `--eval` or `--selector` is given (lazy V8 init),
+//!     so static workloads pay no V8 tax even though the binary ships V8.
+//!   - `browse` — stateful multi-step browser session: open a URL,
+//!     click / fill / submit / goto / read across pages with V8 +
+//!     cookies preserved. Scriptable via `--do "step"` chains, or
+//!     interactive as a REPL.
+//!   - `serve` — Chrome DevTools Protocol server, drop-in for
+//!     Playwright / puppeteer-core clients.
 //!
 //! Examples:
 //!   bouncy fetch URL [--dump html|text|links]
@@ -12,6 +18,8 @@
 //!   bouncy fetch URL --selector '[data-ready=\"1\"]' --dump html
 //!   bouncy fetch URL -X POST --body '...' -H 'Authorization: ...'
 //!   bouncy scrape URL... [--concurrency N] [--format json|text]
+//!   bouncy browse URL --do "fill input[name=q] hello" --do "submit form"
+//!   bouncy browse URL                                    # interactive REPL
 
 mod browse;
 mod scrape;
@@ -30,7 +38,11 @@ use clap::{Parser, Subcommand, ValueEnum};
 use url::Url;
 
 #[derive(Parser, Debug)]
-#[command(name = "bouncy", version, about = "Headless scraping CLI (bouncy)")]
+#[command(
+    name = "bouncy",
+    version,
+    about = "Headless scraping + browsing CLI (bouncy)"
+)]
 struct Args {
     #[command(subcommand)]
     cmd: Cmd,
