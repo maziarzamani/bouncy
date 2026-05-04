@@ -390,10 +390,7 @@ impl BouncyServer {
             .touch(&input.session_id)
             .map_err(map_store_err)?;
         let target = target_from_pair(input.selector.as_deref(), input.index)?;
-        let snapshot = session
-            .click_target(target)
-            .await
-            .map_err(map_browse_err)?;
+        let snapshot = session.click_target(target).await.map_err(map_browse_err)?;
         Self::ok(&BrowseSnapshotOutput { snapshot })
     }
 
@@ -662,9 +659,7 @@ impl BouncyServer {
         let steps: Vec<BrowseChainStepOutput> = outs
             .into_iter()
             .map(|o| match o {
-                ChainStepOutput::Snapshot(snapshot) => {
-                    BrowseChainStepOutput::Snapshot { snapshot }
-                }
+                ChainStepOutput::Snapshot(snapshot) => BrowseChainStepOutput::Snapshot { snapshot },
                 ChainStepOutput::Reads(matches) => BrowseChainStepOutput::Reads { matches },
                 ChainStepOutput::Eval { result, snapshot } => {
                     BrowseChainStepOutput::EvalResult { result, snapshot }

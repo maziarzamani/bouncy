@@ -369,9 +369,7 @@ impl Operation {
                 StepOutput::EvalResult(r.result, r.snapshot)
             }
             Operation::Snapshot => StepOutput::Snapshot(session.snapshot().await?),
-            Operation::ClickText(text) => {
-                StepOutput::Snapshot(session.click_text(text).await?)
-            }
+            Operation::ClickText(text) => StepOutput::Snapshot(session.click_text(text).await?),
             Operation::Select { target, value } => {
                 StepOutput::Snapshot(session.select_option(target.clone(), value).await?)
             }

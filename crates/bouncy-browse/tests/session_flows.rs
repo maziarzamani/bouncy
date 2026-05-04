@@ -414,8 +414,7 @@ async fn fill_target_by_index_resolves_against_current_snapshot() {
         .await
         .unwrap();
     // Pick the email field by index — it has placeholder "you@example.com".
-    let email_idx = snap
-        .forms[0]
+    let email_idx = snap.forms[0]
         .fields
         .iter()
         .find(|f| f.placeholder.as_deref() == Some("you@example.com"))
@@ -426,8 +425,7 @@ async fn fill_target_by_index_resolves_against_current_snapshot() {
         .await
         .unwrap();
     // After the fill, dump_html re-emits the input with value=me@x.test.
-    let same_idx_field = snap2
-        .forms[0]
+    let same_idx_field = snap2.forms[0]
         .fields
         .iter()
         .find(|f| f.placeholder.as_deref() == Some("you@example.com"))
@@ -559,7 +557,10 @@ async fn wait_for_text_finds_existing_text() {
     let (session, _) = BrowseSession::open(&format!("http://{addr}/"), BrowseOpts::default())
         .await
         .unwrap();
-    let snap = session.wait_for_text("create an account", 500).await.unwrap();
+    let snap = session
+        .wait_for_text("create an account", 500)
+        .await
+        .unwrap();
     assert_eq!(snap.title, "Sign up");
 }
 
@@ -573,9 +574,15 @@ async fn back_forward_traverse_session_history() {
     assert_eq!(snap.title, "Landing");
 
     // No history yet.
-    assert!(matches!(session.back().await.unwrap_err(), BrowseError::Io(_)));
+    assert!(matches!(
+        session.back().await.unwrap_err(),
+        BrowseError::Io(_)
+    ));
 
-    let s2 = session.goto(&format!("http://{addr}/signup")).await.unwrap();
+    let s2 = session
+        .goto(&format!("http://{addr}/signup"))
+        .await
+        .unwrap();
     assert_eq!(s2.title, "Sign up");
 
     let back = session.back().await.unwrap();

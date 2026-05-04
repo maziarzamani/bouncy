@@ -181,10 +181,8 @@ impl PageSnapshot {
                 let form_index = indexer.next();
                 let fields_with_ids = collect_form_fields(doc, fid, &mut indexer);
                 form_field_ids.extend(fields_with_ids.iter().map(|(nid, _)| *nid));
-                let fields: Vec<InputSnapshot> = fields_with_ids
-                    .into_iter()
-                    .map(|(_, snap)| snap)
-                    .collect();
+                let fields: Vec<InputSnapshot> =
+                    fields_with_ids.into_iter().map(|(_, snap)| snap).collect();
                 let selector = unique_selector(doc, fid);
                 let action = doc.get_attribute(fid, "action");
                 let method = doc
@@ -387,7 +385,9 @@ fn collect_select_options(doc: &Document, select_id: NodeId) -> Vec<SelectOption
         .into_iter()
         .map(|nid| {
             let text = doc.text_content(nid).trim().to_string();
-            let value = doc.get_attribute(nid, "value").unwrap_or_else(|| text.clone());
+            let value = doc
+                .get_attribute(nid, "value")
+                .unwrap_or_else(|| text.clone());
             let selected = doc.get_attribute(nid, "selected").is_some();
             SelectOption {
                 value,

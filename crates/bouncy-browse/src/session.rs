@@ -115,17 +115,29 @@ impl Target {
 #[derive(Debug, Clone)]
 pub enum ChainStep {
     Click(Target),
-    Fill { target: Target, value: String },
+    Fill {
+        target: Target,
+        value: String,
+    },
     Submit(Target),
     Goto(String),
-    Read { target: Target, mode: ReadMode },
+    Read {
+        target: Target,
+        mode: ReadMode,
+    },
     Eval(String),
     Snapshot,
     /// Fire keyboard events on the matched element (single keypress).
-    PressKey { target: Target, key: String },
+    PressKey {
+        target: Target,
+        key: String,
+    },
     /// Set a `<select>`'s value to the option whose `value=` matches
     /// (falls back to matching the option's visible text).
-    SelectOption { target: Target, value: String },
+    SelectOption {
+        target: Target,
+        value: String,
+    },
     /// Click the first link/button whose visible text matches.
     /// Case-insensitive, trimmed, exact match preferred over substring.
     ClickText(String),
@@ -137,10 +149,15 @@ pub enum ChainStep {
     },
     /// Block until visible body text contains `needle` or `timeout_ms`
     /// elapses. Same polling cadence as `WaitFor`.
-    WaitForText { needle: String, timeout_ms: u64 },
+    WaitForText {
+        needle: String,
+        timeout_ms: u64,
+    },
     /// Pause the actor for `ms` milliseconds — the bouncy DOM is
     /// fully synchronous so this is mostly a courtesy / pacing knob.
-    Wait { ms: u64 },
+    Wait {
+        ms: u64,
+    },
     /// Pop one entry off the back-history stack and re-navigate.
     Back,
     /// Pop one entry off the forward-history stack and re-navigate.
@@ -155,7 +172,10 @@ pub enum ChainStep {
 pub enum ChainStepOutput {
     Snapshot(PageSnapshot),
     Reads(Vec<String>),
-    Eval { result: String, snapshot: PageSnapshot },
+    Eval {
+        result: String,
+        snapshot: PageSnapshot,
+    },
 }
 
 /// A held-open browser session. Cheap to clone the channel handle but
@@ -277,7 +297,8 @@ impl BrowseSession {
     /// index variant looks up the element in a fresh snapshot of the
     /// current page; the selector variant goes straight to JS.
     pub async fn click_target(&self, target: Target) -> Result<PageSnapshot, BrowseError> {
-        self.send(|reply| Command::ClickTarget { target, reply }).await
+        self.send(|reply| Command::ClickTarget { target, reply })
+            .await
     }
 
     /// `fill` against either a selector or a snapshot index.
@@ -296,7 +317,8 @@ impl BrowseSession {
 
     /// `submit` against either a selector or a snapshot index.
     pub async fn submit_target(&self, target: Target) -> Result<PageSnapshot, BrowseError> {
-        self.send(|reply| Command::SubmitTarget { target, reply }).await
+        self.send(|reply| Command::SubmitTarget { target, reply })
+            .await
     }
 
     /// `read` against either a selector or a snapshot index.
@@ -347,11 +369,7 @@ impl BrowseSession {
     /// the matched element. `key` accepts either a single character
     /// or one of the named keys (`Enter`, `Tab`, `Escape`, `ArrowUp`,
     /// `ArrowDown`, `ArrowLeft`, `ArrowRight`, `Backspace`).
-    pub async fn press_key(
-        &self,
-        target: Target,
-        key: &str,
-    ) -> Result<PageSnapshot, BrowseError> {
+    pub async fn press_key(&self, target: Target, key: &str) -> Result<PageSnapshot, BrowseError> {
         self.send(|reply| Command::PressKey {
             target,
             key: key.to_string(),
@@ -418,10 +436,7 @@ impl BrowseSession {
     /// the chain got. Inspired by browser-use's
     /// `max_actions_per_step` — lets an LLM batch a planned sequence
     /// (fill 3 fields, submit, read result) into one round trip.
-    pub async fn chain(
-        &self,
-        steps: Vec<ChainStep>,
-    ) -> Result<Vec<ChainStepOutput>, BrowseError> {
+    pub async fn chain(&self, steps: Vec<ChainStep>) -> Result<Vec<ChainStepOutput>, BrowseError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::Chain { steps, reply: tx })
@@ -785,11 +800,7 @@ fn actor_main(
                     .and_then(|sel| run_select_option(&mut state, &outer_handle, &sel, &value));
                 let _ = reply.send(result);
             }
-            Command::PressKey {
-                target,
-                key,
-                reply,
-            } => {
+            Command::PressKey { target, key, reply } => {
                 let result = state
                     .resolve_target(&target)
                     .and_then(|sel| run_press_key(&mut state, &outer_handle, &sel, &key));
