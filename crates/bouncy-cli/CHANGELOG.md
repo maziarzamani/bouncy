@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.1.9](https://github.com/maziarzamani/bouncy/compare/v0.1.8...v0.1.9) (2026-05-04)
+
+
+### Documentation
+
+* position bouncy as scraper + browser + Claude-driver (PR 5 of the browse roadmap) ([31dd49f](https://github.com/maziarzamani/bouncy/commit/31dd49fc22842c2938b2f032456076958018f6f9))
+* position bouncy as scraper + browser + Claude-driver, add vs browser-use comparison ([f7579e4](https://github.com/maziarzamani/bouncy/commit/f7579e4143bc6c221804ad8d997a780170cd4ddc))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * bouncy-fetch bumped from 0.1.8 to 0.1.9
+    * bouncy-extract bumped from 0.1.8 to 0.1.9
+    * bouncy-js bumped from 0.1.8 to 0.1.9
+    * bouncy-cdp bumped from 0.1.8 to 0.1.9
+    * bouncy-dom bumped from 0.1.8 to 0.1.9
+    * bouncy-browse bumped from 0.1.8 to 0.1.9
+
 ## [0.1.8](https://github.com/maziarzamani/bouncy/compare/v0.1.7...v0.1.8) (2026-05-04)
 
 
