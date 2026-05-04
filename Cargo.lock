@@ -286,6 +286,7 @@ name = "bouncy-cli"
 version = "0.1.7"
 dependencies = [
  "anyhow",
+ "bouncy-browse",
  "bouncy-cdp",
  "bouncy-dom",
  "bouncy-extract",

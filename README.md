@@ -23,7 +23,7 @@ bouncy is a web scraper. Tiny, fast, ships as a single binary — no Node, no Ch
 
 ## Features
 
-- **One install, three modes** — `bouncy fetch` / `scrape` (CLI), `bouncy-mcp` (MCP server for Claude Desktop, Claude Code), `bouncy serve` (CDP, drop-in for Playwright / Puppeteer). Both binaries in the same release tarball.
+- **One install, four modes** — `bouncy fetch` / `scrape` / `browse` (CLI; the last is a stateful multi-step browser), `bouncy-mcp` (MCP server for Claude Desktop, Claude Code, Cursor — including the new `bouncy_browse_*` tools that let LLMs drive autonomous browse flows), `bouncy serve` (CDP, drop-in for Playwright / Puppeteer). Both binaries in the same release tarball.
 - **No runtime to install** — no Node, no Chrome, no Python.
 - **Lazy V8** — boots only when the page actually needs JavaScript. Static pages stay 3–6 ms cold; JS pages 30–80 ms.
 - **Lean** — 10–21 MB resident per page; ~40 MB binary with V8 or ~3.7 MB without.
@@ -263,6 +263,32 @@ bouncy scrape urls.txt --concurrency 50 --tui
 
 `q` (or `Esc`) quits, `↑↓` / `jk` scrolls the URL list, `PgUp` / `PgDn` pages. Requires stdout to be a terminal — piping or redirecting with `--tui` set is rejected with an error so scripts never end up with TUI escape codes in their output. Built behind the default-on `tui` Cargo feature; `--no-default-features` builds skip the ratatui + crossterm dep tree entirely.
 
+### Browse — interactive or scripted multi-step flows
+
+When a single fetch isn't enough — log in, click through, fill a form, submit, read the result — `bouncy browse` opens a stateful session that keeps V8 + cookies alive across steps. Two modes:
+
+```bash
+# Scripted chain — non-interactive, scriptable, pipe-friendly.
+bouncy browse https://help.com \
+  --do "fill input[name=name] Maziar" \
+  --do "fill input[name=email] me@x.test" \
+  --do "submit form#signup" \
+  --do "read h1"
+
+# REPL — drop into an interactive prompt; one command per line.
+bouncy browse https://help.com
+> click a[href='/signup']
+   ↳ snapshot @ https://help.com/signup — title="Sign up", 1 forms, 0 links, 1 buttons, 2 inputs, 1 headings
+> fill input[name=email] me@x.test
+> submit form
+> exit
+
+# JSON output — pipe the final snapshot into jq.
+bouncy browse https://example.com --json --do "read h1" | jq .
+```
+
+Same primitives the `bouncy_browse_*` MCP tools expose, just driven from a shell instead of an LLM. See the CLI Reference below for the full command grammar.
+
 ### MCP server
 
 `bouncy-mcp` is a separate binary (shipped in the same release tarball) that exposes bouncy as a Model Context Protocol server, so LLM clients like Claude Desktop and Claude Code can call bouncy as typed tools instead of shelling out.
@@ -400,6 +426,43 @@ Run a Chrome DevTools Protocol server.
 |---|---|---|
 | `-p`, `--port` | `9222` | WebSocket port |
 | `--host` | `127.0.0.1` | Bind address |
+
+### `bouncy browse <URL>`
+
+Open a stateful browse session — same V8 + cookie jar persists across `click` / `fill` / `submit` / `goto` / `read` / `eval` steps. Two modes:
+
+- **Scripted chain** (non-interactive, scriptable):
+
+  ```bash
+  bouncy browse https://help.com \
+    --do "fill input[name=name] Maziar" \
+    --do "fill input[name=email] me@x.test" \
+    --do "submit form#signup" \
+    --do "read h1"
+  ```
+
+- **REPL** (no `--do`): drops into an interactive prompt; one command per line; `exit` quits. Pipes work too — `bouncy browse <url> < script.txt`.
+
+Command grammar (same in both modes):
+
+```text
+click <selector>                fire synthetic click on matched element
+fill  <selector> <value>        set input value (fires input + change events)
+submit <selector>               submit form (or form containing the matched button)
+goto  <url>                     navigate this session to a new URL
+read  <selector> [mode]         mode: text (default) | html | attr:NAME
+eval  <js>                      evaluate JS in the page's V8 context
+snapshot                        re-print the current page snapshot
+help                            show help
+exit                            quit (REPL only)
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--do` | — | Repeatable. Each value is a single command string. Without `--do`, drops into a REPL on stdin. |
+| `--json` | off | Emit final snapshot (chain) or per-step output (REPL) as JSON instead of text — pipe into `jq`. |
+| `--user-agent` | — | UA override. Defaults to `bouncy/<version> (+repo URL)`. |
+| `--stealth` | off | Enable canvas / audio / WebGPU / battery fingerprint randomization. |
 
 ## License
 
