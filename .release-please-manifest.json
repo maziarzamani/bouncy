@@ -1,11 +1,12 @@
 {
-  "crates/bouncy": "0.1.9",
-  "crates/bouncy-cli": "0.1.9",
-  "crates/bouncy-mcp": "0.1.9",
-  "crates/bouncy-fetch": "0.1.9",
-  "crates/bouncy-extract": "0.1.9",
-  "crates/bouncy-js": "0.1.9",
-  "crates/bouncy-dom": "0.1.9",
-  "crates/bouncy-cdp": "0.1.9",
-  "crates/bouncy-browse": "0.1.9"
+  "crates/bouncy": "0.1.10",
+  "crates/bouncy-cli": "0.1.10",
+  "crates/bouncy-mcp": "0.1.10",
+  "crates/bouncy-fetch": "0.1.10",
+  "crates/bouncy-extract": "0.1.10",
+  "crates/bouncy-js": "0.1.10",
+  "crates/bouncy-dom": "0.1.10",
+  "crates/bouncy-cdp": "0.1.10",
+  "crates/bouncy-browse": "0.1.10",
+  "bench/webarena": "0.0.1"
 }

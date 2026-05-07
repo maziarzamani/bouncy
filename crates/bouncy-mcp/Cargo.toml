@@ -1,6 +1,6 @@
 [package]
 name = "bouncy-mcp"
-version = "0.1.9"
+version = "0.1.10"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -15,11 +15,11 @@ path = "src/main.rs"
 path = "src/lib.rs"
 
 [dependencies]
-bouncy-fetch = { path = "../bouncy-fetch", version = "0.1.9" }
-bouncy-extract = { path = "../bouncy-extract", version = "0.1.9" }
-bouncy-js = { path = "../bouncy-js", version = "0.1.9" }
-bouncy-dom = { path = "../bouncy-dom", version = "0.1.9" }
-bouncy-browse = { path = "../bouncy-browse", version = "0.1.9" }
+bouncy-fetch = { path = "../bouncy-fetch", version = "0.1.10" }
+bouncy-extract = { path = "../bouncy-extract", version = "0.1.10" }
+bouncy-js = { path = "../bouncy-js", version = "0.1.10" }
+bouncy-dom = { path = "../bouncy-dom", version = "0.1.10" }
+bouncy-browse = { path = "../bouncy-browse", version = "0.1.10" }
 uuid = { version = "1", features = ["v4"] }
 rmcp = { workspace = true, features = ["server", "macros", "transport-io", "schemars"] }
 tokio = { workspace = true, features = ["rt", "macros", "time", "io-util", "sync"] }

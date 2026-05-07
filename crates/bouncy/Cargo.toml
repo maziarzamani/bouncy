@@ -1,6 +1,6 @@
 [package]
 name = "bouncy"
-version = "0.1.9"
+version = "0.1.10"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -35,11 +35,11 @@ js = ["dep:bouncy-js"]
 full = ["fetch", "extract", "browse", "dom", "js"]
 
 [dependencies]
-bouncy-fetch = { path = "../bouncy-fetch", version = "0.1.9", optional = true }
-bouncy-extract = { path = "../bouncy-extract", version = "0.1.9", optional = true }
-bouncy-browse = { path = "../bouncy-browse", version = "0.1.9", optional = true }
-bouncy-dom = { path = "../bouncy-dom", version = "0.1.9", optional = true }
-bouncy-js = { path = "../bouncy-js", version = "0.1.9", optional = true }
+bouncy-fetch = { path = "../bouncy-fetch", version = "0.1.10", optional = true }
+bouncy-extract = { path = "../bouncy-extract", version = "0.1.10", optional = true }
+bouncy-browse = { path = "../bouncy-browse", version = "0.1.10", optional = true }
+bouncy-dom = { path = "../bouncy-dom", version = "0.1.10", optional = true }
+bouncy-js = { path = "../bouncy-js", version = "0.1.10", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
