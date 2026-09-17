@@ -78,7 +78,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # MCP server SDK + JSON Schema derive (used by bouncy-mcp).
 # schemars 1.x is required — that's the version rmcp 1.5 re-exports.
-rmcp = { version = "1.5", default-features = false }
+rmcp = { version = "2.1", default-features = false }
 schemars = "1"
 
 # Terminal UI for `bouncy scrape --tui`. crossterm picked over termion
